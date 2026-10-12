@@ -2,6 +2,7 @@
 behind (open in Excel), but it must never be wrong and never block the real work."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -135,6 +136,26 @@ def test_new_button_reaches_a_pc_whose_updater_did_not_know_it(tmp_path, name):
     main.ensure_launchers(app)
     # identical to the button shipped in the repo, CRLF included (cmd reads it line by line)
     assert (app / name).read_bytes() == (ROOT / name).read_bytes()
+
+
+@pytest.mark.parametrize("name", [main.JOURNAL_BAT, main.APP_BAT])
+def test_old_pythonw_only_button_is_replaced(tmp_path, name):
+    """On her PC "python" is the Microsoft Store shortcut and pythonw does not exist."""
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "run.py").write_text("", encoding="utf-8")
+    (app / name).write_bytes(b'@echo off\r\ncd /d "%~dp0"\r\nstart "" pythonw run.py app\r\n')
+    main.ensure_launchers(app)
+    assert (app / name).read_bytes() == (ROOT / name).read_bytes()
+
+
+@pytest.mark.parametrize("name", [n for n in os.listdir(ROOT) if n.endswith(".bat")])
+def test_every_button_tries_the_py_launcher_first(name):
+    text = (ROOT / name).read_bytes().decode("ascii")
+    assert "\r\n" in text and "\n" not in text.replace("\r\n", "")
+    first_py = min(i for i in (text.find("pyw run.py"), text.find("set PY=py\r")) if i >= 0)
+    plain = [i for i in (text.find("pythonw run.py"), text.find("python run.py"), text.find("python -")) if i >= 0]
+    assert all(first_py < i for i in plain), name
 
 
 def test_button_is_only_made_inside_an_install(tmp_path):

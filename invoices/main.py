@@ -307,7 +307,10 @@ def show_journal() -> None:
 APP_DIR = Path(__file__).resolve().parents[1]
 JOURNAL_BAT = "3 - יומן חשבוניות.bat"
 APP_BAT = "חשבוניות לחשבשבת.bat"
-LAUNCHERS = {name: f'@echo off\r\ncd /d "%~dp0"\r\nstart "" pythonw run.py {command}\r\n'
+LAUNCHERS = {name: ('@echo off\r\ncd /d "%~dp0"\r\n'
+                    'rem py/pyw first: on some PCs "python" is only the Microsoft Store shortcut and pythonw does not exist\r\n'
+                    f'where pyw >nul 2>nul && (start "" pyw run.py {command} & exit /b)\r\n'
+                    f'start "" pythonw run.py {command}\r\n')
              for name, command in ((JOURNAL_BAT, "journal"), (APP_BAT, "app"))}
 
 
@@ -317,11 +320,12 @@ def ensure_launchers(app: Path = APP_DIR) -> None:
     if not (app / "run.py").exists():
         return
     for name, text in LAUNCHERS.items():
-        if not (app / name).exists():
-            try:
-                (app / name).write_bytes(text.encode("ascii"))
-            except OSError:
-                pass             # a missing shortcut must not stop her real work
+        path = app / name
+        try:
+            if not path.exists() or b"pyw run.py" not in path.read_bytes():   # missing, or pythonw-only
+                path.write_bytes(text.encode("ascii"))
+        except OSError:
+            pass                 # a missing shortcut must not stop her real work
 
 
 def ensure_desktop_icon(cfg: dict) -> bool:
