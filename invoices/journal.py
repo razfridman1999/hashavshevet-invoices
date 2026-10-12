@@ -41,7 +41,7 @@ NOTE_CODES = [
     ("חשבון עסקה", "deal_only"), ("ספק חדש", "new_supplier"), ("ספק ראשון בכלי", "from_index"),
     ("שולח לא מוכר", "unknown_sender"), ("כפילות", "duplicate"), ("סכום גבוה", "large"),
     ("סכום שלילי", "negative"), ("לח.פ הזה יש כמה", "index_many"), ("תאריך החשבונית רחוק", "date_far"),
-    ("ייתכן שבקובץ יש כמה חשבוניות", "multi_unclear"),
+    ("ייתכן שבקובץ יש כמה חשבוניות", "multi_unclear"), ("לספק יש כמה סעיפי הוצאה", "ledger_many"),
 ]
 
 

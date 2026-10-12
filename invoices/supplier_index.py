@@ -81,9 +81,12 @@ def load(path: str | Path) -> dict[str, list[dict]]:
     cannot be read must be reported, not silently ignored."""
     if not path:
         return {}
-    path = Path(path)
+    return parse(read_rows(Path(path)))
+
+
+def read_rows(path: Path) -> list[list]:
+    """Any Hashavshevet Excel export as rows: openpyxl first, the installed Excel if it chokes."""
     try:
-        rows = _rows_openpyxl(path)
+        return _rows_openpyxl(path)
     except Exception:
-        rows = _rows_excel(path)
-    return parse(rows)
+        return _rows_excel(path)

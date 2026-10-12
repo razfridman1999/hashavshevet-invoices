@@ -134,6 +134,9 @@
       <label for="f-rep_folder">תיקיית הלקוח ב-REP</label>
       <div class="field"><input id="f-rep_folder"><button data-pick="folder" data-for="f-rep_folder">בחירה...</button></div>
       <span class="hint">קובץ הקליטה וקובץ השיוך נשמרים ב: חשבוניות שנקלטו\תאריך.</span>
+      <label for="f-ledger">כרטסת ספקים</label>
+      <div class="field"><input id="f-ledger"><button data-pick="file" data-for="f-ledger">בחירה...</button></div>
+      <span class="hint">לא חובה. אם ריק, הכלי לוקח את הקובץ החדש ביותר שבשמו "כרטסת" מתיקיית החשבוניות לקליטה. מולה נבדקות כפילויות, וממנה נלקח סעיף ההוצאה של הספק.</span>
     </div>
     <datalist id="ol-folders"></datalist>
     <div class="actions"><button class="main" id="settings-save">שמירה</button>
@@ -225,7 +228,7 @@
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
 const PILL = {"ממתינה לבדיקה": "p", "מוכנה לייצוא": "r", "בקובץ קליטה": "e", "לא תיקלט": "x"};
 const FIELDS = ["client_name", "outlook_folder", "done_folder", "own_company_ids", "vat_account", "ttype", "hid",
-                "supplier_index", "files_folder", "rep_folder"];
+                "supplier_index", "files_folder", "rep_folder", "ledger"];
 let items = [], filter = "פתוחות", working = false, settings = {};
 
 const $ = id => document.getElementById(id);

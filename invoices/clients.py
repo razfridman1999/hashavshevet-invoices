@@ -15,7 +15,7 @@ from .extract import valid_israeli_id
 FOLDER = "לקוחות"
 MAIN_NAME = "לקוח ראשי"
 TEXT_FIELDS = ("client_name", "outlook_folder", "done_folder", "vat_account", "ttype", "hid",
-               "supplier_index", "files_folder", "rep_folder")
+               "supplier_index", "files_folder", "rep_folder", "ledger")
 
 
 def _cfg(home: Path) -> dict:

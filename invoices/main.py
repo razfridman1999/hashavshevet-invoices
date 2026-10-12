@@ -16,7 +16,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from . import journal, sources, split, supplier_index, ui, wpr
+from . import journal, ledger, sources, split, supplier_index, ui, wpr
 from .extract import Invoice, extract
 from .workbook import description_of, details_text, read_review, save_xls_copy, write_import, write_review
 
@@ -41,6 +41,7 @@ DEFAULT_CONFIG = {
     "hid": "",                        # Hashavshevet's company id: range "jurnal<hid>" + the .wpr mapping
     "files_folder": "",               # a "DD.MM.YY" folder per import, with each invoice as a PDF
     "rep_folder": "",                 # REP\<NN-לקוח>: import files go to "חשבוניות שנקלטו\DD-MM-YYYY"
+    "ledger": "",                     # כרטסת ספקים export; empty = newest "*כרטסת*" in files_folder
 }
 DEAL_NOTE = 'חשבון עסקה: לא נקלט (נקלטת רק חשבונית מס). אם זו בכל זאת חשבונית מס, למחוק "לא" ולכתוב "כן"'
 
@@ -82,6 +83,8 @@ def review_notes(inv: Invoice, supplier: dict | None, entered: set[str], in_batc
         notes.insert(0, DEAL_NOTE)
     if not supplier:
         notes.append("ספק חדש: למלא כרטיס ספק וכרטיס הוצאה (פעם אחת, מכאן זה אוטומטי)")
+    elif supplier.get("from_index") and supplier.get("expense_account"):
+        notes.append("ספק ראשון בכלי: כרטיס הספק מהאינדקס וכרטיס ההוצאה מהכרטסת, לבדוק את הפרטים")
     elif supplier.get("from_index"):
         notes.append("ספק ראשון בכלי: כרטיס הספק מולא מהאינדקס, למלא כרטיס הוצאה ולבדוק את הפרטים")
     elif sender and sender.lower() not in supplier.get("senders", []):
@@ -177,6 +180,7 @@ def fetch() -> Path | None:
         ui.fail("לא הצלחתי לקרוא את קובץ אינדקס הספקים. אם הוא פתוח באקסל, לסגור אותו ולנסות שוב, "
                 f'או לבחור אותו מחדש ב"0 - התקנה ראשונה".\n\n{cfg["supplier_index"]}\n\nפרטים טכניים: {e}')
 
+    led, ledger_line = _ledger(cfg)
     done = set(state["mail_ids"])
     seen_keys = set(state["invoice_keys"])
     fetched = _split_invoices(fetched, done | set(previous), set(cfg["own_company_ids"]))
@@ -208,8 +212,18 @@ def fetch() -> Path | None:
         index_note = ""
         if not sup:
             sup, index_note = from_index(index, inv.supplier_id)
+        ledger_notes = []
+        if led and sup and sup.get("supplier_account"):
+            if not sup.get("expense_account"):      # her rule: the card this supplier's invoices went to
+                cards = led.expense_accounts(sup["supplier_account"])
+                if len(cards) == 1:
+                    sup = {**sup, "expense_account": cards[0]}
+                elif cards:
+                    ledger_notes.append(f"לספק יש כמה סעיפי הוצאה בכרטסת ({', '.join(cards[:4])}): לבחור כרטיס הוצאה")
+            if led.has(sup["supplier_account"], inv.invoice_number, inv.total):
+                ledger_notes.append(LEDGER_DUP)
         key = f"{inv.supplier_id}:{inv.invoice_number}"
-        notes = review_notes(inv, sup, seen_keys, batch_keys, cfg, f.sender)
+        notes = review_notes(inv, sup, seen_keys, batch_keys, cfg, f.sender) + ledger_notes
         if index_note:
             notes.append(index_note)
         batch_keys.add(key)
@@ -246,10 +260,28 @@ def fetch() -> Path | None:
     out = HOME / f"לבדיקה {datetime.now():%Y-%m-%d %H%M%S}.xlsx"
     write_review(rows, out)
     ready = sum(1 for r in rows if not r["notes"])
+    in_ledger = sum(1 for r in rows if LEDGER_DUP in (r.get("notes") or ""))
     logged = _log([(r, *journal.status_after_fetch(r)) for r in rows])
     ui.message(f"נמצאו {len(rows)} חשבוניות: {ready} מוכנות, {len(rows) - ready} לבדיקה.\n\nהטבלה תיפתח עכשיו."
-               + logged)
+               + (f"\n\n{in_ledger} מהן כבר רשומות בכרטסת: הן לא ייכנסו שוב." if in_ledger else "")
+               + ledger_line + logged)
     return out
+
+
+LEDGER_DUP = "כפילות: החשבונית כבר רשומה בכרטסת (אותו ספק, מספר וסכום)"
+
+
+def _ledger(cfg: dict):
+    """(ledger or None, a line for her message). A ledger that cannot be read is said out
+    loud: she must know duplicates were not checked against it this time."""
+    path = ledger.find(cfg)
+    if not path:
+        return None, ""
+    try:
+        return ledger.load(path), f"\n\nנבדק מול הכרטסת: {path.name}"
+    except Exception:
+        return None, (f"\n\nהכרטסת ({path.name}) לא נקראה, ולכן הפעם לא נבדקו מולה כפילויות וסעיפי הוצאה. "
+                      "אם היא פתוחה באקסל, לסגור אותה ולנסות שוב.")
 
 
 def export(review_path: Path | None = None) -> Path | None:
@@ -273,6 +305,7 @@ def export(review_path: Path | None = None) -> Path | None:
     approved, rejected, held_rows, duplicates = [], [], [], []
     done_ids = set(state["mail_ids"])
     entered, approved_keys = set(state["invoice_keys"]), set()
+    led, ledger_line = _ledger(cfg)   # again: the ledger may be newer than the sheet
     for r in review_rows:
         if r["key"] in done_ids:     # already exported from this very sheet: never twice
             continue
@@ -281,7 +314,8 @@ def export(review_path: Path | None = None) -> Path | None:
             rejected.append(r)
             continue
         key = f'{r["supplier_id"]}:{r["invoice_number"]}'
-        if r["supplier_id"] and r["invoice_number"] and (key in entered or key in approved_keys):
+        in_ledger = bool(led and r["supplier_account"] and led.has(r["supplier_account"], r["invoice_number"], r.get("total")))
+        if in_ledger or (r["supplier_id"] and r["invoice_number"] and (key in entered or key in approved_keys)):
             duplicates.append(r)     # her rule: not saved again, the mail still counts as handled
             continue
         if answer not in ("כן", "v", "V", "1", "yes"):
@@ -326,7 +360,7 @@ def export(review_path: Path | None = None) -> Path | None:
         save(STATE, state)
         logged = _log(not_exported)
         moved = _move_handled(cfg, state, rejected + duplicates)
-        ui.message("אין שורות מאושרות." + dup_note + held + moved + logged)
+        ui.message("אין שורות מאושרות." + dup_note + held + moved + ledger_line + logged)
         return None
 
     now = datetime.now()
@@ -355,7 +389,7 @@ def export(review_path: Path | None = None) -> Path | None:
     extra = _file_away(approved, out, xls, date_dir, hid)
     logged = _log([(r, journal.EXPORTED, "") for r in approved] + not_exported, out.name)
     moved = _move_handled(cfg, state, approved + duplicates + rejected)
-    ui.message(f"נוצר קובץ קליטה עם {len(approved)} חשבוניות.\n\n" + extra + dup_note + held + moved + logged)
+    ui.message(f"נוצר קובץ קליטה עם {len(approved)} חשבוניות.\n\n" + extra + dup_note + held + moved + ledger_line + logged)
     return out
 
 
