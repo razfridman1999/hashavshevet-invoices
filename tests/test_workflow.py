@@ -30,7 +30,7 @@ def home(tmp_path, monkeypatch):
                         ("SUPPLIERS", h / "suppliers.json"), ("STATE", h / "state.json")):
         monkeypatch.setattr(main, name, value)
     main.save(main.CONFIG, {**main.DEFAULT_CONFIG, "source": "folder", "test_folder": str(demo.OUT),
-                            "own_company_ids": [demo.OWN_ID], "vat_account": "77100"})
+                            "own_company_ids": [demo.OWN_ID], "vat_account": "77100", "ttype": "ח"})
     return h
 
 
@@ -38,7 +38,7 @@ def fill(review: Path, decide) -> None:
     """Play the bookkeeper: decide(row_cells, file_name) edits a row in place."""
     wb = openpyxl.load_workbook(review)
     for row in wb.active.iter_rows(min_row=2):
-        decide(row, Path(row[12].value).name)
+        decide(row, Path(row[13].value).name)
     wb.save(review)
 
 
@@ -61,13 +61,13 @@ def test_full_cycle_balances_and_learns(home):
     rows = import_rows(out)
     assert len(rows) == 5
     for r in rows:  # every journal line balances: debits == credits
-        assert round((r[6] or 0) + (r[8] or 0), 2) == round((r[10] or 0) + (r[12] or 0), 2)
-    credit = next(r for r in rows if "זיכוי" in r[4])
-    assert (credit[5], credit[9], credit[11]) == ("40013", "81400", "77100")  # supplier debited
+        assert round((r[7] or 0) + (r[9] or 0), 2) == round((r[11] or 0) + (r[13] or 0), 2)
+    credit = next(r for r in rows if "זיכוי" in r[5])
+    assert (credit[6], credit[10], credit[12]) == ("40013", "81400", "77100")  # supplier debited
     assert json.loads((home / "suppliers.json").read_text(encoding="utf-8"))[S[0]]["supplier_account"] == "40010"
     # second run: only the scan, which she has not handled yet, comes back
     review2 = main.fetch()
-    names = [Path(r[12]).name for r in openpyxl.load_workbook(review2).active.iter_rows(min_row=2, values_only=True)]
+    names = [Path(r[13]).name for r in openpyxl.load_workbook(review2).active.iter_rows(min_row=2, values_only=True)]
     assert names == ["07_scanned.pdf"]
 
 
@@ -76,10 +76,10 @@ def test_known_supplier_comes_back_ready(home):
     main.export()
     demo.page(demo.simple('חשמל השרון בע"מ', S[0], "חשבונית מס 20261187", "05/11/2026",
                           "455.00", "81.90", "536.90"), "09_electric_nov.pdf")
-    rows = {Path(r[12]).name: r for r in
+    rows = {Path(r[13]).name: r for r in
             openpyxl.load_workbook(main.fetch()).active.iter_rows(min_row=2, values_only=True)}
     nov = rows["09_electric_nov.pdf"]
-    assert (nov[0], nov[3], nov[4], nov[11]) == ("כן", "40010", "81100", None)
+    assert (nov[0], nov[3], nov[4], nov[12]) == ("כן", "40010", "81100", None)
 
 
 def test_duplicate_approved_twice_enters_once(home):
@@ -90,7 +90,7 @@ def test_duplicate_approved_twice_enters_once(home):
             row[3].value, row[4].value = ACCOUNTS[S[0]]
     fill(main.fetch(), approve_everything)
     rows = import_rows(main.export())
-    assert sum(1 for r in rows if r[0] == "20261045") == 1
+    assert sum(1 for r in rows if r[1] == "20261045") == 1
 
 
 def test_hand_edited_amount_that_does_not_balance_is_held_back(home):
@@ -100,7 +100,7 @@ def test_hand_edited_amount_that_does_not_balance_is_held_back(home):
             row[9].value = 999.99          # total no longer equals net + VAT
     fill(main.fetch(), bad_edit)
     rows = import_rows(main.export())
-    assert all(r[0] != "20261045" for r in rows)
+    assert all(r[1] != "20261045" for r in rows)
     assert len(rows) == 4
 
 
@@ -115,7 +115,7 @@ def test_unfinished_sheet_survives_a_second_fetch(home):
     os.utime(first, (first_mtime, first_mtime - 120))   # older file, as if made earlier today
     time.sleep(0.01)
     second = main.fetch()
-    rows = {Path(r[12]).name: r for r in openpyxl.load_workbook(second).active.iter_rows(min_row=2, values_only=True)}
+    rows = {Path(r[13]).name: r for r in openpyxl.load_workbook(second).active.iter_rows(min_row=2, values_only=True)}
     assert (rows["01_electric.pdf"][3], rows["01_electric.pdf"][4]) == ("40010", "81100")
 
 
@@ -135,14 +135,14 @@ def test_blank_invoice_number_is_held_back(home):
         if name.startswith("01"):
             row[5].value = None
     fill(main.fetch(), blank)
-    assert all("חשמל" not in (r[4] or "") for r in import_rows(main.export()))
+    assert all("חשמל" not in (r[5] or "") for r in import_rows(main.export()))
 
 
 def test_corrupt_pdf_does_not_stop_the_others(home):
     (demo.OUT / "00_corrupt.pdf").write_bytes(b"%PDF-1.4 broken")
     rows = list(openpyxl.load_workbook(main.fetch()).active.iter_rows(min_row=2, values_only=True))
     assert len(rows) == 9
-    assert any(Path(r[12]).name == "00_corrupt.pdf" and r[11] for r in rows)
+    assert any(Path(r[13]).name == "00_corrupt.pdf" and r[12] for r in rows)
 
 
 def test_pending_row_survives_when_its_mail_is_no_longer_fetched(home):
@@ -154,7 +154,7 @@ def test_pending_row_survives_when_its_mail_is_no_longer_fetched(home):
     (demo.OUT / "02_office_table.pdf").unlink()        # aged out of days_back / moved
     import os
     os.utime(first, (first.stat().st_mtime - 120,) * 2)
-    rows = {Path(r[12]).name: r for r in
+    rows = {Path(r[13]).name: r for r in
             openpyxl.load_workbook(main.fetch()).active.iter_rows(min_row=2, values_only=True)}
     assert rows["02_office_table.pdf"][3] == "40011"
 
@@ -163,13 +163,13 @@ def test_hand_added_row_exports_once_and_does_not_crash(home):
     review = main.fetch()
     wb = openpyxl.load_workbook(review)
     ws = wb.active
-    ws.append(["כן", "מוסך הגליל", S[6], "40020", "81600", "4410", None, 600, 108, 708, None, None, None, None])
+    ws.append(["כן", "מוסך הגליל", S[6], "40020", "81600", "4410", None, 600, 108, 708, None, "10/26 תיקון רכב מוסך הגליל", None, None, None, None])
     ws.cell(ws.max_row, 7).value = __import__("datetime").datetime(2026, 10, 2)
     wb.save(review)
     first = import_rows(main.export(review))
-    assert sum(1 for r in first if r[0] == "4410") == 1
+    assert sum(1 for r in first if r[1] == "4410") == 1
     second = main.export(review)
-    assert second is None or all(r[0] != "4410" for r in import_rows(second))
+    assert second is None or all(r[1] != "4410" for r in import_rows(second))
 
 
 @pytest.mark.parametrize("suffix", [".xlsx", ".xls"])
@@ -190,8 +190,8 @@ def test_hashavshevet_can_read_it_over_odbc(home, suffix):
     rows = cur.fetchall()
     cn.close()
     assert len(rows) == 5
-    assert isinstance(rows[0][cols.index("חשבון זכות1")], str)   # account keys must stay text
-    assert isinstance(rows[0][cols.index("סכום זכות1")], float)
+    assert isinstance(rows[0][cols.index("חשבון זכות 1")], str)   # account keys must stay text
+    assert isinstance(rows[0][cols.index("סכום זכות 1")], float)
 
 
 @pytest.mark.parametrize("suffix", [".xlsx", ".xls"])
@@ -215,9 +215,9 @@ def test_odbc_credit_note_after_many_plain_rows(home, suffix):
     cn.close()
     credit = [r for r in rows if "זיכוי" in r[cols.index("פרטים")]]
     assert len(credit) == 1
-    assert credit[0][cols.index("חשבון זכות2")] == "77100"
-    assert credit[0][cols.index("סכום זכות2")] == 36.0
+    assert credit[0][cols.index("חשבון זכות 2")] == "77100"
+    assert credit[0][cols.index("סכום זכות 2")] == 36.0
     for r in rows:  # every row balances as ODBC sees it
-        d = (r[cols.index("סכום חובה1")] or 0) + (r[cols.index("סכום חובה2")] or 0)
-        c = (r[cols.index("סכום זכות1")] or 0) + (r[cols.index("סכום זכות2")] or 0)
+        d = (r[cols.index("סכום חובה 1")] or 0) + (r[cols.index("סכום חובה 2")] or 0)
+        c = (r[cols.index("סכום זכות 1")] or 0) + (r[cols.index("סכום זכות 2")] or 0)
         assert round(d, 2) == round(c, 2)

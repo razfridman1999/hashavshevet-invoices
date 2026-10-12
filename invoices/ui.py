@@ -28,12 +28,15 @@ def fail(text: str) -> None:
 
 
 def ask_settings(current: dict) -> dict | None:
-    """First-run form: the three things only she knows. Returns None if she cancels."""
+    """First-run form: the things only she knows. Returns None if she cancels."""
     import tkinter as tk
+    from tkinter import filedialog
 
     fields = [("vat_account", 'מספר כרטיס מע"מ תשומות בחשבשבת', True),
+              ("ttype", 'ס.ת (סוג תנועה) לחשבוניות ספקים בחברה הזו', True),
               ("own_company_ids", 'ח.פ של החברה שאת עובדת בה (שלא ייחשב כספק)', True),
-              ("outlook_folder", "תיקיית החשבוניות באאוטלוק (להשאיר ריק = דואר נכנס)", False)]
+              ("outlook_folder", "תיקיית החשבוניות באאוטלוק (להשאיר ריק = דואר נכנס)", False),
+              ("supplier_index", "קובץ אינדקס ספקים מחשבשבת - אקסל (לא חובה, ממלא כרטיסי ספק לבד)", False)]
     root = tk.Tk()
     root.title(TITLE)
     root.resizable(False, False)
@@ -47,6 +50,14 @@ def ask_settings(current: dict) -> dict | None:
         e.insert(0, ", ".join(value) if isinstance(value, list) else (value or ""))
         e.pack(anchor="e", padx=16)
         entries[key] = e
+        if key == "supplier_index":   # a path is hard to type: pick the file instead
+            def browse(entry=e):
+                path = filedialog.askopenfilename(title="בחירת קובץ אינדקס ספקים",
+                                                  filetypes=[("Excel", "*.xlsx *.xls"), ("הכול", "*.*")])
+                if path:
+                    entry.delete(0, tk.END)
+                    entry.insert(0, path)
+            tk.Button(root, text="בחירת קובץ...", font=font, command=browse).pack(anchor="e", padx=16, pady=(4, 0))
     error = tk.Label(root, text="", fg="#b00", font=font)
     error.pack(anchor="e", padx=16)
 

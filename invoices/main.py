@@ -12,13 +12,13 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from . import sources, ui
+from . import sources, supplier_index, ui
 from .extract import Invoice, extract
-from .workbook import read_review, save_xls_copy, write_import, write_review
+from .workbook import description_of, details_text, read_review, save_xls_copy, write_import, write_review
 
 HOME = Path(os.environ.get("INVOICES_HOME", Path.home() / "Documents" / "חשבוניות לחשבשבת"))
 CONFIG = HOME / "config.json"
-SUPPLIERS = HOME / "suppliers.json"   # ח.פ -> {name, supplier_account, expense_account}
+SUPPLIERS = HOME / "suppliers.json"   # ח.פ -> {name, supplier_account, expense_account, description, senders}
 STATE = HOME / "state.json"          # what was already processed, so nothing is entered twice
 
 DEFAULT_CONFIG = {
@@ -28,8 +28,11 @@ DEFAULT_CONFIG = {
     "days_back": 45,
     "own_company_ids": [],            # the employer's own ח.פ, so it is never taken for the supplier
     "vat_account": "",                # כרטיס מע"מ תשומות
+    "ttype": "",                      # ס.ת for supplier invoices - differs between companies
+    "supplier_index": "",             # Excel export of Hashavshevet's supplier index (optional)
     "large_amount": 5000,             # invoices above this always go to review
 }
+DEAL_NOTE = 'חשבון עסקה: לא נקלט (נקלטת רק חשבונית מס). אם זו בכל זאת חשבונית מס, למחוק "לא" ולכתוב "כן"'
 
 
 def load(path: Path, default):
@@ -44,12 +47,27 @@ def save(path: Path, data) -> None:
     tmp.replace(path)
 
 
+def from_index(index: dict[str, list[dict]], supplier_id: str) -> tuple[dict | None, str]:
+    """(supplier, note) for a supplier not learned yet, from Hashavshevet's own index."""
+    cards = index.get(supplier_id, []) if supplier_id else []
+    if len(cards) == 1:
+        return {**cards[0], "from_index": True}, ""
+    if len(cards) > 1:
+        listed = ", ".join(f'{c["supplier_account"]} {c["name"]}' for c in cards)
+        return None, f"לח.פ הזה יש כמה כרטיסי ספק באינדקס ({listed}): לבחור כרטיס ספק"
+    return None, ""
+
+
 def review_notes(inv: Invoice, supplier: dict | None, entered: set[str], in_batch: set[str],
                  cfg: dict, sender: str = "") -> list[str]:
     """Why this invoice needs a human look. An empty list means the row is ready (green)."""
     notes = list(inv.warnings)
+    if inv.deal_only:
+        notes.insert(0, DEAL_NOTE)
     if not supplier:
         notes.append("ספק חדש: למלא כרטיס ספק וכרטיס הוצאה (פעם אחת, מכאן זה אוטומטי)")
+    elif supplier.get("from_index"):
+        notes.append("ספק ראשון בכלי: כרטיס הספק מולא מהאינדקס, למלא כרטיס הוצאה ולבדוק את הפרטים")
     elif sender and sender.lower() not in supplier.get("senders", []):
         # Anyone can email a PDF that carries a known supplier's ח.פ - classic invoice
         # fraud. A known supplier writing from an address it never used is held back.
@@ -107,6 +125,11 @@ def fetch() -> Path | None:
     except Exception as e:
         ui.fail("לא הצלחתי לקרוא את טבלת הבדיקה הקודמת. אם היא פתוחה באקסל, לסגור אותה ולנסות שוב.\n\n"
                 f"פרטים טכניים: {e}")
+    try:
+        index = supplier_index.load(cfg["supplier_index"])
+    except Exception as e:
+        ui.fail("לא הצלחתי לקרוא את קובץ אינדקס הספקים. אם הוא פתוח באקסל, לסגור אותו ולנסות שוב, "
+                f'או לבחור אותו מחדש ב"0 - התקנה ראשונה".\n\n{cfg["supplier_index"]}\n\nפרטים טכניים: {e}')
 
     done = set(state["mail_ids"])
     seen_keys = set(state["invoice_keys"])
@@ -127,12 +150,18 @@ def fetch() -> Path | None:
         if inv.invoice_date and abs((inv.invoice_date - f.received.date()).days) > 120:
             inv.warnings.append(f"תאריך החשבונית רחוק מהיום שבו הגיע המייל ({f.received:%d/%m/%Y}): לבדוק")
         sup = suppliers.get(inv.supplier_id)
+        index_note = ""
+        if not sup:
+            sup, index_note = from_index(index, inv.supplier_id)
         key = f"{inv.supplier_id}:{inv.invoice_number}"
         notes = review_notes(inv, sup, seen_keys, batch_keys, cfg, f.sender)
+        if index_note:
+            notes.append(index_note)
         batch_keys.add(key)
+        name = (sup or {}).get("name") or inv.supplier_name
         rows.append({
-            "approve": "" if notes else "כן",
-            "supplier_name": (sup or {}).get("name") or inv.supplier_name,
+            "approve": "לא" if inv.deal_only else ("" if notes else "כן"),
+            "supplier_name": name,
             "supplier_id": inv.supplier_id,
             "supplier_account": (sup or {}).get("supplier_account", ""),
             "expense_account": (sup or {}).get("expense_account", ""),
@@ -142,6 +171,8 @@ def fetch() -> Path | None:
             "vat": float(inv.vat) if inv.vat is not None else None,
             "total": float(inv.total) if inv.total is not None else None,
             "allocation_number": inv.allocation_number,
+            "details": details_text(inv.invoice_date, "זיכוי" if inv.total is not None and inv.total < 0
+                                    else (sup or {}).get("description", ""), name),
             "notes": " | ".join(notes),
             "file": str(f.pdf),
             "key": f.mail_id,
@@ -167,6 +198,8 @@ def export(review_path: Path | None = None) -> Path | None:
     cfg = {**DEFAULT_CONFIG, **load(CONFIG, {})}
     if not cfg["vat_account"]:
         ui.fail('חסר מספר כרטיס מע"מ תשומות. להריץ את "0 - התקנה ראשונה".')
+    if not cfg["ttype"]:
+        ui.fail('חסר ס.ת (סוג תנועה) לחשבוניות ספקים. להריץ את "0 - התקנה ראשונה".')
     suppliers = load(SUPPLIERS, {})
     state = load(STATE, {"mail_ids": [], "invoice_keys": []})
     if review_path is None:
@@ -208,11 +241,16 @@ def export(review_path: Path | None = None) -> Path | None:
         approved_keys.add(key)
         approved.append(r)
         if r["supplier_id"]:  # learn: next time this supplier is filled in automatically
-            known = suppliers.get(r["supplier_id"], {}).get("senders", [])
+            before = suppliers.get(r["supplier_id"], {})
+            known = before.get("senders", [])
             senders = sorted(set(known) | ({r["sender"]} if r.get("sender") else set()))
+            description = (description_of(r.get("details"), r["supplier_name"])
+                           if float(r["total"]) >= 0 else before.get("description", ""))  # a credit note teaches nothing
             suppliers[r["supplier_id"]] = {"name": r["supplier_name"],
                                            "supplier_account": r["supplier_account"],
                                            "expense_account": r["expense_account"],
+                                           # "<מה נעשה>" from her פרטים, reused next month
+                                           "description": description,
                                            "senders": senders}
 
     held = ("\n\nהשורות האלה סומנו לאישור אבל לא נכנסו:\n• " + "\n• ".join(problems)) if problems else ""
@@ -223,7 +261,7 @@ def export(review_path: Path | None = None) -> Path | None:
         return None
 
     out = HOME / f"לקליטה בחשבשבת {datetime.now():%Y-%m-%d %H%M%S}.xlsx"
-    write_import(approved, cfg["vat_account"], out)
+    write_import(approved, cfg["vat_account"], out, cfg["ttype"])
     xls = save_xls_copy(out)
     # state right after the file exists: if anything later fails, a rerun must not
     # export these rows a second time

@@ -36,6 +36,19 @@ def _get(url: str, timeout: float) -> bytes:
         return r.read()
 
 
+def is_newer(remote: str, local: str) -> bool:
+    """Only a strictly newer release is installed ("2026.10.12.3" > "2026.10.12.2").
+    A local copy that is ahead of the release branch is never rolled back."""
+    def parts(v: str) -> tuple[int, ...]:
+        return tuple(int(p) for p in v.strip().split("."))
+    if not local.strip():               # no VERSION file: any release is newer
+        return True
+    try:
+        return parts(remote) > parts(local)
+    except ValueError:
+        return False
+
+
 def remote_version(timeout: float = 4) -> str:
     return _get(f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/VERSION", timeout).decode().strip()
 
@@ -84,7 +97,7 @@ def update(timeout: float = 4) -> str | None:
         return None
     try:
         new = remote_version(timeout)
-        if not new or new == local_version():
+        if not new or not is_newer(new, local_version()):
             return None
         data = _get(f"https://codeload.github.com/{REPO}/zip/refs/heads/{BRANCH}", timeout * 5)
         with tempfile.TemporaryDirectory() as tmp:

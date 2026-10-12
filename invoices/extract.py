@@ -43,7 +43,12 @@ NOT_VAT_LINE = re.compile(r'(?:לפני|כולל|ללא|פטור\s+מ|חייב\s
 # so a title never borrows a number (a date, an amount) from the line below it
 DOC_TITLE = (r"(?:" + CREDIT_TITLE + r"|חשבונית(?:[ \t]+מס)?(?:[ \t]*/[ \t]*קבלה)?(?:[ \t]+(?:מקור|העתק|זיכוי|עסקה|נאמן[ \t]+למקור))?"
              r"|חשבון[ \t]+עסקה|קבלה|Tax[ \t]+Invoice|Invoice)")
-NUMBER_RE = re.compile(DOC_TITLE + r"[ \t]*(?:מס[\'׳]?|מספר|No\.?|#)?[ \t]*[:#]?[ \t]*([A-Za-z]{0,3}-?\d{2,12})(?![\d/.])")
+# the number may carry a prefix: letters ("INV-123") or a short series ("3-1901938", "01/004687")
+NUMBER_RE = re.compile(DOC_TITLE + r"[ \t]*(?:מס[\'׳]?|מספר|No\.?|#)?[ \t]*[:#]?[ \t]*"
+                       r"((?:[A-Za-z]{1,3}-?|\d{1,3}[-/])?\d{2,12})(?![\d/.])")
+# "חשבון עסקה" is a payment request, not a tax invoice: it is never entered
+DEAL_ONLY = re.compile(r"חשבון[ \t]+עסקה")
+TAX_INVOICE = re.compile(r"חשבונית[ \t]+מס|Tax[ \t]+Invoice", re.I)
 NUMBER_BEFORE_RE = re.compile(r"(?<![\d/.])(\d{2,12})[ \t:]*" + DOC_TITLE)   # RTL visual order
 
 
@@ -58,6 +63,7 @@ class Invoice:
     vat: Decimal | None = None
     allocation_number: str = ""      # מספר הקצאה (חשבונית ישראל)
     has_text: bool = True
+    deal_only: bool = False          # "חשבון עסקה" without a tax invoice: skipped, not entered
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -287,8 +293,18 @@ def _extract_text(text: str, source: str, own_ids: set[str]) -> Invoice:
         inv.warnings.append('המילה "זיכוי" מופיעה במסמך: לוודא שזו לא חשבונית זיכוי')
 
     inv.supplier_name = _supplier_name(text.splitlines(), inv.supplier_id)
+    inv.deal_only = bool(DEAL_ONLY.search(text)) and not TAX_INVOICE.search(text)
     check_amounts(inv)
     return inv
+
+
+def journal_reference(invoice_number: str) -> str:
+    """אסמכתא for Hashavshevet: the invoice number without its prefix, numeric, max 9
+    digits from the end ("3-1901938" -> "1901938", "01/004687" -> "4687")."""
+    groups = re.findall(r"\d+", invoice_number or "")
+    if not groups:
+        return ""
+    return (groups[-1].lstrip("0") or "0")[-9:]
 
 
 def check_amounts(inv: Invoice) -> None:

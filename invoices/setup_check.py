@@ -1,7 +1,7 @@
 """First-run setup: ask the three settings, then check Outlook and Excel are reachable."""
 from __future__ import annotations
 
-from . import main, ui
+from . import main, supplier_index, ui
 from .extract import valid_israeli_id
 
 
@@ -35,6 +35,18 @@ def updates_ok() -> str:
                 "התוכנה תעבוד, אבל עדכונים לא יגיעו לבד. לספר לרז.")
 
 
+def index_ok(path: str) -> str:
+    if not path:
+        return ""
+    try:
+        n = len(supplier_index.load(path))
+    except Exception:
+        return "✘ לא הצלחתי לקרוא את קובץ אינדקס הספקים. אם הוא פתוח באקסל, לסגור ולהריץ שוב."
+    if not n:
+        return '✘ בקובץ האינדקס לא נמצאו עמודות "מפתח חשבון" ו"ע.מורשה". לייצא שוב מחשבשבת עם העמודות האלה.'
+    return f"✔ אינדקס ספקים נקרא ({n} ספקים עם ח.פ)"
+
+
 def run() -> None:
     main.HOME.mkdir(parents=True, exist_ok=True)
     cfg = {**main.DEFAULT_CONFIG, **main.load(main.CONFIG, {})}
@@ -44,10 +56,11 @@ def run() -> None:
     bad = [n for n in answers["own_company_ids"] if not valid_israeli_id(n)]
     cfg.update(answers)
     main.save(main.CONFIG, cfg)
-    lines = [outlook_ok(), excel_ok(), updates_ok(), f"✔ ההגדרות נשמרו ב:\n{main.CONFIG}"]
+    lines = [outlook_ok(), excel_ok(), updates_ok(), index_ok(cfg["supplier_index"]), f"✔ ההגדרות נשמרו ב:\n{main.CONFIG}"]
+    lines = [l for l in lines if l]
     if bad:
         lines.append(f"⚠ המספר {bad[0]} לא נראה כמו ח.פ תקין, כדאי לבדוק אותו.")
-    ui.message("\n\n".join(lines), error=bool(bad) or "✘" in lines[0])
+    ui.message("\n\n".join(lines), error=bool(bad) or any(l.startswith("✘") for l in lines))
 
 
 if __name__ == "__main__":
