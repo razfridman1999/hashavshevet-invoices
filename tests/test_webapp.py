@@ -156,3 +156,34 @@ def test_status_items_carry_pdf_text_as_plain_strings(app):
 def test_page_never_builds_html_from_data():
     page = (ROOT / "invoices" / "app.html").read_text(encoding="utf-8")
     assert "innerHTML" not in page and "insertAdjacentHTML" not in page and "document.write" not in page
+
+
+CHILD = """
+import sys, threading
+sys.path.insert(0, sys.argv[1])
+from invoices import main, ui, webapp
+def fetch():
+    import win32com.client
+    win32com.client.Dispatch("Scripting.Dictionary")   # any real COM object
+    ui.message("com ok")
+main.fetch = fetch
+results = []
+for _ in range(2):    # the first thread to import pythoncom is set up by the import itself
+    t = threading.Thread(target=lambda: results.append(webapp.run_action("fetch")))
+    t.start(); t.join()
+sys.stdout = sys.__stdout__
+print("RESULT", [r["text"][:30] for r in results])
+"""
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="COM is Windows only")
+def test_actions_can_use_com_from_a_server_thread(tmp_path):
+    """Each request runs in a new thread; Outlook and Excel are COM, which fails in a
+    thread that did not call CoInitialize. A fake Outlook in the other tests hid this.
+    A fresh process: anything else in this test run may already have set COM up."""
+    import os
+    import subprocess
+    env = {**os.environ, "INVOICES_HOME": str(tmp_path), "INVOICES_NO_OPEN": "1", "PYTHONIOENCODING": "utf-8"}
+    out = subprocess.run([sys.executable, "-c", CHILD, str(ROOT)], capture_output=True, text=True,
+                         encoding="utf-8", env=env, timeout=60)
+    assert "RESULT ['com ok', 'com ok']" in out.stdout, out.stdout + out.stderr

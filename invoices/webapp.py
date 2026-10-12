@@ -92,10 +92,28 @@ def _open(path: Path) -> None:
         os.startfile(path)
 
 
+def _com_init() -> bool:
+    """Every request runs in its own thread, and COM (Outlook, Excel) refuses to work in a
+    thread that did not initialise it: "CoInitialize has not been called"."""
+    try:
+        import pythoncom
+    except ImportError:
+        return False
+    pythoncom.CoInitialize()
+    return True
+
+
+def _com_done(inited: bool) -> None:
+    if inited:
+        import pythoncom
+        pythoncom.CoUninitialize()
+
+
 def run_action(name: str) -> dict:
     """One button press. Returns what to show on the page: {ok, text}."""
     ui.captured = []
     ok = True
+    com = _com_init()
     try:
         if name == "fetch":
             out = main.fetch()
@@ -131,6 +149,7 @@ def run_action(name: str) -> dict:
         ok = False
     finally:
         messages, ui.captured = ui.captured, None
+        _com_done(com)
     return {"ok": ok, "text": "\n\n".join(text for text, _ in messages)}
 
 
