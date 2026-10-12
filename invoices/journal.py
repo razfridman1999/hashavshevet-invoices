@@ -29,6 +29,28 @@ XLSX_NAME = "יומן חשבוניות.xlsx"
 LOCKED = "\n\nיומן החשבוניות פתוח באקסל ולכן לא התעדכן הפעם. הוא יתעדכן בפעם הבאה שהוא סגור."
 
 
+# Every note the tool writes starts with one of these. A report to Raz carries only the
+# code, never the note itself: notes can hold a supplier's ח.פ, e-mail or card names.
+NOTE_CODES = [
+    ("PDF סרוק", "scan"), ("לא הצלחתי לפתוח", "broken_pdf"),
+    ("הח.פ של הספק נמצא בלי כותרת", "id_unlabelled"), ("נמצאו שני מספרי ח.פ", "two_ids"),
+    ("לא נמצא ח.פ", "no_id"), ("לא נמצא מספר חשבונית", "no_number"), ("לא נמצא תאריך", "no_date"),
+    ("יש כמה תאריכים", "many_dates"), ("לא נמצא סכום כולל", "no_total"),
+    ('כתוב "עוסק פטור" אבל', "exempt_with_vat"), ('לא נמצא מע"מ', "no_vat"), ('מע"מ 0', "vat_zero"),
+    ('המילה "זיכוי"', "credit_word"), ('מע"מ ', "vat_mismatch"),
+    ("חשבון עסקה", "deal_only"), ("ספק חדש", "new_supplier"), ("ספק ראשון בכלי", "from_index"),
+    ("שולח לא מוכר", "unknown_sender"), ("כפילות", "duplicate"), ("סכום גבוה", "large"),
+    ("סכום שלילי", "negative"), ("לח.פ הזה יש כמה", "index_many"), ("תאריך החשבונית רחוק", "date_far"),
+]
+
+
+def issue_codes(row: dict) -> list[str]:
+    codes = []
+    for note in filter(None, (n.strip() for n in str(row.get("notes") or "").split(" | "))):
+        codes.append(next((code for prefix, code in NOTE_CODES if note.startswith(prefix)), "other"))
+    return codes
+
+
 def status_after_fetch(row: dict) -> tuple[str, str]:
     answer = str(row.get("approve") or "").strip()
     if answer == "לא":
@@ -70,6 +92,13 @@ def record(home: Path, changes: list[tuple[dict, str, str]], export_file: str = 
             "todo": reason,
             "updated": now,
             "export_file": export_file if status == EXPORTED else "",
+            # for the monthly VAT summary, the missing-invoice alert and the PDF button
+            "supplier_id": row.get("supplier_id") or "",
+            "net": row.get("net"),
+            "vat": row.get("vat"),
+            "file": row.get("file") or "",
+            # what went wrong reading it, as codes only: this is what a report may carry
+            "codes": issue_codes(row),
         }
     tmp = home / (JSON_NAME + ".tmp")
     tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=2, default=str), encoding="utf-8")

@@ -58,6 +58,15 @@
   .pill.e { background: var(--blue); color: var(--blue-ink); } .pill.x { background: var(--grey); color: #555; }
   .empty { padding: 28px; text-align: center; color: var(--muted); }
   footer { margin-top: 22px; display: flex; gap: 22px; flex-wrap: wrap; font-size: 14px; }
+  .missing { display: none; margin-top: 22px; background: #fff7e6; border: 1px solid #f0c36d; border-radius: 12px; padding: 14px 18px; }
+  .missing ul { margin: 8px 0; padding-inline-start: 22px; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .pad { padding: 8px 16px 14px; margin: 0; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover { background: #f5f8fc; }
+  section.summary h2, section.report h2 { font-size: 17px; margin: 0; padding: 14px 16px 6px; }
+  section.report { display: none; }
+  section.report textarea { display: block; width: calc(100% - 32px); margin: 0 16px; font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; }
   .gone { display: none; padding: 40px; text-align: center; font-size: 18px; }
   @media (max-width: 760px) { .cards, .steps { grid-template-columns: 1fr; } }
 </style>
@@ -97,6 +106,12 @@
   <div class="busy" id="busy">עובד על זה...</div>
   <div class="result" id="result" role="status"></div>
 
+  <div class="missing" id="missing">
+    <b id="missing-title"></b>
+    <ul id="missing-list"></ul>
+    <span class="hint">ספקים ששלחו חשבונית בכל אחד משלושת החודשים שלפני כן. אם זה בסדר (למשל השירות הסתיים), אפשר להתעלם.</span>
+  </div>
+
   <section class="list">
     <div class="tabs" id="tabs">
       <button class="tab" aria-pressed="false" data-filter="פתוחות">צריך טיפול</button>
@@ -113,6 +128,25 @@
       </table>
     </div>
     <div class="empty" id="empty">אין כאן חשבוניות.</div>
+    <div class="hint pad">לחיצה על שורה פותחת את החשבונית עצמה.</div>
+  </section>
+
+  <section class="list summary">
+    <h2>סיכום חודשי (מה שנכנס לקבצי קליטה, לפי תאריך החשבונית)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>חודש</th><th>חשבוניות</th><th>לפני מע"מ</th><th>מע"מ תשומות</th><th>סה"כ</th><th></th></tr></thead>
+        <tbody id="summary"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="summary-empty">עוד אין חשבוניות בקבצי קליטה.</div>
+  </section>
+
+  <section class="list report" id="report-box">
+    <h2>דיווח לרז</h2>
+    <p class="hint pad">מה לא עבד? (לא חובה). הדוח לא כולל שמות, מספרים או סכומים מהחשבוניות, והוא נפתח לבדיקה לפני שליחה.</p>
+    <textarea id="report-note" rows="3" maxlength="4000" placeholder="למשל: בחשבונית של ספק מסוים לא נמצא הסכום"></textarea>
+    <div class="pad"><button class="main" id="report-send">יצירת דוח</button></div>
   </section>
 
   <footer>
@@ -120,6 +154,7 @@
     <button class="link" data-run="folder">פתיחת התיקייה</button>
     <button class="link" data-run="setup">הגדרות</button>
     <button class="link" data-run="guide">מדריך</button>
+    <button class="link" id="report-open">דיווח לרז על בעיה</button>
   </footer>
 </main>
 <div class="gone" id="gone">המערכת נסגרה. כדי להמשיך, ללחוץ שוב על האייקון "חשבוניות לחשבשבת".</div>
@@ -132,8 +167,10 @@ let items = [], filter = "פתוחות", working = false;
 
 const $ = id => document.getElementById(id);
 
-async function api(path, method) {
-  const r = await fetch(path, {method: method || "GET", headers: {"X-Token": TOKEN}});
+async function api(path, method, body) {
+  const headers = {"X-Token": TOKEN};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const r = await fetch(path, {method: method || "GET", headers, body: body === undefined ? undefined : JSON.stringify(body)});
   if (r.status === 403) throw new Error("forbidden");
   return r.json();
 }
@@ -168,7 +205,8 @@ function render() {
   const body = $("rows");
   body.replaceChildren();
   for (const i of shown) {
-    const tr = el("tr");
+    const tr = el("tr", undefined, i.has_file ? "clickable" : "");
+    if (i.has_file) { tr.dataset.key = i.key; tr.title = "לחיצה פותחת את החשבונית"; }
     const st = el("td"); st.append(el("span", i.status, "pill " + (PILL[i.status] || "p")));
     tr.append(st, el("td", i.supplier_name), el("td", i.invoice_number), el("td", fmtDate(i.invoice_date)),
               el("td", fmtMoney(i.total), "num"),
@@ -181,6 +219,36 @@ function render() {
   for (const t of document.querySelectorAll(".tab")) t.setAttribute("aria-pressed", String(t.dataset.filter === filter));
 }
 
+function fmtMonth(m) { return m ? m.slice(5, 7) + "/" + m.slice(2, 4) : ""; }
+
+function renderMissing(list) {
+  $("missing").style.display = list.length ? "block" : "none";
+  if (!list.length) return;
+  $("missing-title").textContent = `לא הגיעה חשבונית לחודש ${fmtMonth(list[0].month)} מ-${list.length} ספקים קבועים:`;
+  $("missing-list").replaceChildren(...list.map(m => el("li", m.supplier_name)));
+}
+
+function renderSummary(rows) {
+  $("summary").replaceChildren(...rows.map(m => {
+    const tr = el("tr");
+    const star = m.partial ? " *" : "";   // a sum missing some invoices must not look complete
+    tr.append(el("td", fmtMonth(m.month)), el("td", String(m.count), "num"), el("td", fmtMoney(m.net) + star, "num"),
+              el("td", fmtMoney(m.vat) + star, "num"), el("td", fmtMoney(m.total) + star, "num"),
+              el("td", m.partial ? "* חלקי: בחלק מהחשבוניות של החודש חסרים סכומים, לבדוק מול חשבשבת" : "", "hint"));
+    return tr;
+  }));
+  $("summary-empty").style.display = rows.length ? "none" : "block";
+}
+
+function show(r) {
+  const res = $("result");
+  if (!r.text) { res.style.display = "none"; return; }
+  res.textContent = r.text;
+  res.className = "result " + (r.ok ? "ok" : "err");
+  res.style.display = "block";
+  res.scrollIntoView({block: "nearest"});
+}
+
 async function refresh() {
   try {
     const s = await api("/api/status");
@@ -191,6 +259,8 @@ async function refresh() {
     $("setup-banner").style.display = s.configured ? "none" : "flex";
     items = s.items;
     render();
+    renderMissing(s.missing);
+    renderSummary(s.summary);
   } catch (e) {
     $("app").style.display = "none";
     $("gone").style.display = "block";
@@ -206,12 +276,7 @@ async function run(action) {
   const quiet = ["review", "journal", "folder", "guide"].includes(action);
   if (!quiet) $("busy").style.display = "block";
   try {
-    const r = await api("/api/run/" + action, "POST");
-    if (r.text) {
-      res.textContent = r.text;
-      res.className = "result " + (r.ok ? "ok" : "err");
-      res.style.display = "block";
-    }
+    show(await api("/api/run/" + action, "POST"));
   } catch (e) {
     res.textContent = "אין חיבור למערכת. לסגור את הדף וללחוץ שוב על האייקון.";
     res.className = "result err";
@@ -224,9 +289,23 @@ async function run(action) {
   }
 }
 
-document.addEventListener("click", e => {
+document.addEventListener("click", async e => {
+  const row = e.target.closest("tr.clickable");
+  if (row) {
+    try { show(await api("/api/pdf?key=" + encodeURIComponent(row.dataset.key), "POST")); }
+    catch (err) { show({ok: false, text: "אין חיבור למערכת. לסגור את הדף וללחוץ שוב על האייקון."}); }
+    return;
+  }
   const b = e.target.closest("button");
   if (!b) return;
+  if (b.id === "report-open") { $("report-box").style.display = "block"; $("report-note").focus(); return; }
+  if (b.id === "report-send") {
+    b.disabled = true;
+    try { show(await api("/api/report", "POST", {note: $("report-note").value})); $("report-note").value = ""; $("report-box").style.display = "none"; }
+    catch (err) { show({ok: false, text: "אין חיבור למערכת. לסגור את הדף וללחוץ שוב על האייקון."}); }
+    finally { b.disabled = false; }
+    return;
+  }
   if (b.dataset.run) run(b.dataset.run);
   else if (b.dataset.filter) { filter = b.dataset.filter; render(); }
 });

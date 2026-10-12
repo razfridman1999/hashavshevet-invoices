@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import journal, main, ui
+from . import insights, journal, main, report, ui
 
 APP = Path(__file__).resolve().parents[1]
 PAGE = Path(__file__).with_name("app.html")
@@ -46,23 +46,45 @@ def status() -> dict:
     cfg = {**main.DEFAULT_CONFIG, **main.load(main.CONFIG, {})}
     entries = journal.load(main.HOME)
     month = datetime.now().strftime("%Y-%m")
-    items = sorted(entries.values(), key=lambda e: e["updated"], reverse=True)
-    items.sort(key=lambda e: journal.ORDER.get(e["status"], 9))
+    items = sorted(entries.items(), key=lambda kv: kv[1]["updated"], reverse=True)
+    items.sort(key=lambda kv: journal.ORDER.get(kv[1]["status"], 9))
     review, imported = _latest("לבדיקה *.xlsx"), _latest("לקליטה בחשבשבת *.xlsx")
     return {
         "version": version(),
         "configured": bool(cfg["own_company_ids"] and cfg["vat_account"] and cfg["ttype"]),
         "counts": {
-            "pending": sum(e["status"] == journal.PENDING for e in items),
-            "ready": sum(e["status"] == journal.READY for e in items),
+            "pending": sum(e["status"] == journal.PENDING for _, e in items),
+            "ready": sum(e["status"] == journal.READY for _, e in items),
             "exported_month": sum(e["status"] == journal.EXPORTED and e["updated"].startswith(month)
-                                  for e in items),
+                                  for _, e in items),
         },
-        "items": [{k: (str(e.get(k)) if e.get(k) is not None else "") for k, _ in journal.COLS}
-                  for e in items[:300]],
+        "items": [{**{k: (str(e.get(k)) if e.get(k) is not None else "") for k, _ in journal.COLS},
+                   "key": key, "has_file": bool(e.get("file"))}
+                  for key, e in items[:300]],
         "review": review.name if review else "",
         "import": imported.name if imported else "",
+        "summary": insights.monthly_summary(entries),
+        "missing": insights.missing_invoices(entries),
     }
+
+
+def open_pdf(key: str) -> dict:
+    """Only a PDF the tool itself saved, named by its log entry - never a path the
+    request supplies, so the page cannot be used to open anything else."""
+    entry = journal.load(main.HOME).get(key)
+    inbox = (main.HOME / "קבצים").resolve()
+    path = Path(entry["file"]).resolve() if entry and entry.get("file") else None
+    if not path or path.suffix.lower() != ".pdf" or inbox not in path.parents or not path.exists():
+        return {"ok": False, "text": "הקובץ של החשבונית הזו לא נמצא (אולי נמחק מהתיקייה)."}
+    _open(path)
+    return {"ok": True, "text": ""}
+
+
+def make_report(note: str) -> dict:
+    path = report.write(main.HOME, version(), note[:4000])
+    _open(path)
+    return {"ok": True, "text": f"הדוח נשמר ונפתח לבדיקה:\n{path}\n\n"
+                                "אין בו שמות, מספרים או סכומים מהחשבוניות. אפשר לשלוח אותו לרז בוואטסאפ או במייל."}
 
 
 def _open(path: Path) -> None:
@@ -159,13 +181,24 @@ class App:
                 if not self._allowed() or not self.headers.get("X-Token"):   # POST: header only
                     return self._send(403, b"forbidden", "text/plain")
                 app.last_seen = time.monotonic()
-                path = urlparse(self.path).path
-                if not path.startswith("/api/run/"):
+                url = urlparse(self.path)
+                if url.path == "/api/pdf":
+                    return self._json(open_pdf((parse_qs(url.query).get("key") or [""])[0]))
+                if url.path == "/api/report":
+                    size = int(self.headers.get("Content-Length") or 0)
+                    if size > 64_000:
+                        return self._send(413, b"too large", "text/plain")
+                    try:
+                        note = json.loads(self.rfile.read(size) or b"{}").get("note", "")
+                    except ValueError:
+                        note = ""
+                    return self._json(make_report(str(note)))
+                if not url.path.startswith("/api/run/"):
                     return self._send(404, b"not found", "text/plain")
                 if not app.busy.acquire(blocking=False):
                     return self._json({"ok": False, "text": "פעולה אחרת עוד רצה. לחכות שתסתיים."}, 409)
                 try:
-                    result = run_action(path.rsplit("/", 1)[1])
+                    result = run_action(url.path.rsplit("/", 1)[1])
                 finally:
                     app.busy.release()
                     app.last_seen = time.monotonic()
