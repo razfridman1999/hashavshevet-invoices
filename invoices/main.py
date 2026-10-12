@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import sys
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from . import journal, sources, supplier_index, ui
+from . import journal, sources, split, supplier_index, ui, wpr
 from .extract import Invoice, extract
 from .workbook import description_of, details_text, read_review, save_xls_copy, write_import, write_review
 
@@ -32,8 +35,20 @@ DEFAULT_CONFIG = {
     "ttype": "",                      # ס.ת for supplier invoices - differs between companies
     "supplier_index": "",             # Excel export of Hashavshevet's supplier index (optional)
     "large_amount": 5000,             # invoices above this always go to review
+    # one client's own places; the real names and paths live only on her PC
+    "client_name": "",
+    "done_folder": "",                # Outlook folder for handled mail ("<לקוח> טופל"); empty = leave it
+    "hid": "",                        # Hashavshevet's company id: range "jurnal<hid>" + the .wpr mapping
+    "files_folder": "",               # a "DD.MM.YY" folder per import, with each invoice as a PDF
+    "rep_folder": "",                 # REP\<NN-לקוח>: import files go to "חשבוניות שנקלטו\DD-MM-YYYY"
 }
 DEAL_NOTE = 'חשבון עסקה: לא נקלט (נקלטת רק חשבונית מס). אם זו בכל זאת חשבונית מס, למחוק "לא" ולכתוב "כן"'
+
+
+def use(home: Path) -> None:
+    """Work inside one client's folder: its settings, suppliers, state and sheets."""
+    global HOME, CONFIG, SUPPLIERS, STATE
+    HOME, CONFIG, SUPPLIERS, STATE = home, home / "config.json", home / "suppliers.json", home / "state.json"
 
 
 def load(path: Path, default):
@@ -112,6 +127,27 @@ def _log(changes: list[tuple[dict, str, str]], export_file: str = "") -> str:
         return f"\n\nיומן החשבוניות לא התעדכן ({e}). החשבוניות עצמן טופלו כרגיל."
 
 
+def _split_invoices(fetched: list, known: set[str], own_ids: set[str]) -> list:
+    """A PDF holding several invoices becomes one entry per invoice, each with its own
+    id ("<mail id>#<pages>"). A file already handled or waiting on her sheet as a whole
+    stays whole, so nothing she typed is lost and nothing comes back twice."""
+    out = []
+    for f in fetched:
+        if f.mail_id in known:
+            out.append(f)
+            continue
+        try:
+            parts, note = split.split_pdf(f.pdf, own_ids)
+        except Exception:      # a broken file is reported by the reading step itself
+            parts, note = [], ""
+        if not parts:
+            out.append(replace(f, note=note) if note else f)
+            continue
+        out += [replace(f, pdf=part, mail_id=f"{f.mail_id}#{pages}", original=str(f.pdf))
+                for part, pages in parts]
+    return out
+
+
 def fetch() -> Path | None:
     cfg = {**DEFAULT_CONFIG, **load(CONFIG, {})}
     suppliers = load(SUPPLIERS, {})
@@ -143,6 +179,13 @@ def fetch() -> Path | None:
 
     done = set(state["mail_ids"])
     seen_keys = set(state["invoice_keys"])
+    fetched = _split_invoices(fetched, done | set(previous), set(cfg["own_company_ids"]))
+    ids = state.setdefault("entry_ids", {})     # to move each mail to "טופל" once handled
+    for f in fetched:
+        if f.entry_id:
+            ids[sources.tag_of(f.mail_id)] = f.entry_id
+    if ids:
+        save(STATE, state)
     rows, batch_keys = [], set()
     for f in fetched:
         if f.mail_id in done:
@@ -157,6 +200,8 @@ def fetch() -> Path | None:
         except Exception:  # one broken attachment must not block all the others
             inv = Invoice(source=str(f.pdf), has_text=False)
             inv.warnings.append("לא הצלחתי לפתוח את הקובץ (פגום או מוגן בסיסמה): הזנה ידנית")
+        if f.note:
+            inv.warnings.append(f.note)
         if inv.invoice_date and abs((inv.invoice_date - f.received.date()).days) > 120:
             inv.warnings.append(f"תאריך החשבונית רחוק מהיום שבו הגיע המייל ({f.received:%d/%m/%Y}): לבדוק")
         sup = suppliers.get(inv.supplier_id)
@@ -185,6 +230,7 @@ def fetch() -> Path | None:
                                     else (sup or {}).get("description", ""), name),
             "notes": " | ".join(notes),
             "file": str(f.pdf),
+            "original": f.original,
             "key": f.mail_id,
             "sender": f.sender.lower(),
         })
@@ -224,7 +270,7 @@ def export(review_path: Path | None = None) -> Path | None:
     except PermissionError:
         ui.fail("הטבלה פתוחה באקסל. לשמור, לסגור אותה ולנסות שוב.")
 
-    approved, rejected, held_rows = [], [], []
+    approved, rejected, held_rows, duplicates = [], [], [], []
     done_ids = set(state["mail_ids"])
     entered, approved_keys = set(state["invoice_keys"]), set()
     for r in review_rows:
@@ -233,6 +279,10 @@ def export(review_path: Path | None = None) -> Path | None:
         answer = str(r.get("approve") or "").strip()
         if answer == "לא":           # explicitly rejected: never show it again
             rejected.append(r)
+            continue
+        key = f'{r["supplier_id"]}:{r["invoice_number"]}'
+        if r["supplier_id"] and r["invoice_number"] and (key in entered or key in approved_keys):
+            duplicates.append(r)     # her rule: not saved again, the mail still counts as handled
             continue
         if answer not in ("כן", "v", "V", "1", "yes"):
             continue                 # left empty: stays pending for the next run
@@ -246,7 +296,6 @@ def export(review_path: Path | None = None) -> Path | None:
         if bad := _balance_problem(r):
             held_rows.append((r, f"{label}: {bad}"))
             continue
-        key = f'{r["supplier_id"]}:{r["invoice_number"]}'
         if r["invoice_number"] and (key in entered or key in approved_keys):
             held_rows.append((r, f"{label}: כבר נקלטה או מופיעה פעמיים - לא נכנסה שוב"))
             continue
@@ -267,28 +316,137 @@ def export(review_path: Path | None = None) -> Path | None:
 
     problems = [text for _, text in held_rows]
     held = ("\n\nהשורות האלה סומנו לאישור אבל לא נכנסו:\n• " + "\n• ".join(problems)) if problems else ""
-    state["mail_ids"] = sorted(done_ids | {r["key"] for r in rejected})
+    dup_note = ("\n\nכפולות (כבר נקלטו, לא נשמרו שוב):\n• "
+                + "\n• ".join(f'{r["supplier_name"]} {r["invoice_number"]}' for r in duplicates)) if duplicates else ""
+    state["mail_ids"] = sorted(done_ids | {r["key"] for r in rejected + duplicates})
     not_exported = ([(r, journal.REJECTED, 'סומנה "לא"') for r in rejected]
+                    + [(r, journal.REJECTED, DUPLICATE_DONE) for r in duplicates]
                     + [(r, journal.PENDING, text) for r, text in held_rows])
     if not approved:
         save(STATE, state)
-        ui.message("אין שורות מאושרות." + held + _log(not_exported))
+        logged = _log(not_exported)
+        moved = _move_handled(cfg, state, rejected + duplicates)
+        ui.message("אין שורות מאושרות." + dup_note + held + moved + logged)
         return None
 
-    out = HOME / f"לקליטה בחשבשבת {datetime.now():%Y-%m-%d %H%M%S}.xlsx"
-    write_import(approved, cfg["vat_account"], out, cfg["ttype"])
+    now = datetime.now()
+    hid = str(cfg.get("hid") or "").strip()
+    try:   # every folder before anything is written: a missing drive must not leave half an import
+        date_dir = Path(cfg["files_folder"]) / f"{now:%d.%m.%y}" if cfg.get("files_folder") else None
+        rep_dir = (Path(cfg["rep_folder"]) / "חשבוניות שנקלטו" / f"{now:%d-%m-%Y}") if cfg.get("rep_folder") else None
+        for d in (date_dir, rep_dir):
+            if d:
+                d.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        ui.fail(f"לא הצלחתי לפתוח את התיקייה לשמירה. שום דבר לא נקלט.\n\n{e}\n\n"
+                "לבדוק שהכונן מחובר ושהנתיב בהגדרות הלקוח נכון.")
+    out_dir = rep_dir or date_dir or HOME
+    # short name: the mapping file holds the full path twice and has room for 255 bytes
+    out = out_dir / (f"{now:%H%M%S}.xlsx" if out_dir != HOME else f"לקליטה בחשבשבת {now:%Y-%m-%d %H%M%S}.xlsx")
+    write_import(approved, cfg["vat_account"], out, cfg["ttype"], f"jurnal{hid}" if hid else "invoices")
     xls = save_xls_copy(out)
     # state right after the file exists: if anything later fails, a rerun must not
     # export these rows a second time
     state["mail_ids"] = sorted(set(state["mail_ids"]) | {r["key"] for r in approved})
     state["invoice_keys"] = sorted(entered | approved_keys)
+    state["last_import"] = str(out)
     save(STATE, state)
     save(SUPPLIERS, suppliers)
+    extra = _file_away(approved, out, xls, date_dir, hid)
     logged = _log([(r, journal.EXPORTED, "") for r in approved] + not_exported, out.name)
-    ui.message(f"נוצר קובץ קליטה עם {len(approved)} חשבוניות.\n\n"
-               f"בחשבשבת: כללי > ממשקים > יבוא תנועות הנה\"ח > ODBC, ולבחור את הקובץ:\n{out.name}"
-               + (f"\n\nאם חשבשבת לא רואה אותו, לבחור את:\n{xls.name}" if xls else "") + held + logged)
+    moved = _move_handled(cfg, state, approved + duplicates + rejected)
+    ui.message(f"נוצר קובץ קליטה עם {len(approved)} חשבוניות.\n\n" + extra + dup_note + held + moved + logged)
     return out
+
+
+def _safe_name(text: str) -> str:
+    text = text.replace('"', "״")      # בע"מ: Windows forbids '"', the Hebrew gershayim reads the same
+    return re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", text).strip(" .")[:120] or "חשבונית"
+
+
+def _copy_once(src: Path, dest: Path) -> Path:
+    """Copy src to dest; a different file already there gets " (2)", " (3)"... - never overwritten."""
+    n = 1
+    target = dest
+    while target.exists():
+        if target.read_bytes() == src.read_bytes():
+            return target
+        n += 1
+        target = dest.with_name(f"{dest.stem} ({n}){dest.suffix}")
+    shutil.copy2(src, target)
+    return target
+
+
+def _file_away(approved: list[dict], out: Path, xls: Path | None, date_dir: Path | None, hid: str) -> str:
+    """Each invoice into the day's folder as "<ספק> <מספר>.pdf" (a cut-up file's original
+    under "מקור"), the import file next to them, and the field mapping beside the import
+    file. Returns the lines telling her what to do in Hashavshevet. The import file is
+    already written: a failure here becomes a line in her message, never a lost export."""
+    lines, problems = [], []
+    data_file = xls or out
+    if hid:
+        try:
+            mapping = wpr.write(data_file, hid)
+            lines.append('בחשבשבת: כללי > ממשקים > יבוא תנועות הנה"ח > ODBC, ללחוץ על התיקייה הצהובה '
+                         f"ולבחור את קובץ השיוך:\n{mapping}\n\nכל השדות כבר משודכים. אחר כך \"יבוא תנועות יומן\".")
+        except (OSError, ValueError) as e:
+            problems.append(f"קובץ השיוך (WPR) לא נוצר ({e}). אפשר לבחור את הקובץ ידנית.")
+    if not lines:
+        lines.append(f"בחשבשבת: כללי > ממשקים > יבוא תנועות הנה\"ח > ODBC, ולבחור את הקובץ:\n{out}"
+                     + (f"\n\nאם חשבשבת לא רואה אותו, לבחור את:\n{xls}" if xls else ""))
+    if date_dir:
+        for r in approved:
+            try:
+                src = Path(r["file"])
+                if src.exists():
+                    _copy_once(src, date_dir / _safe_name(f'{r["supplier_name"]} {r["invoice_number"]}.pdf'))
+                if r.get("original") and Path(r["original"]).exists():
+                    (date_dir / "מקור").mkdir(exist_ok=True)
+                    _copy_once(Path(r["original"]), date_dir / "מקור" / Path(r["original"]).name)
+            except OSError:
+                problems.append(f'{r["supplier_name"]} {r["invoice_number"]}: הקובץ לא הועתק לתיקיית התאריך')
+        if out.parent != date_dir:
+            try:
+                _copy_once(data_file, date_dir / data_file.name)
+            except OSError:
+                problems.append("קובץ הקליטה לא הועתק לתיקיית התאריך")
+        lines.append(f"החשבוניות נשמרו ב:\n{date_dir}")
+    return "\n\n".join(lines + problems)
+
+
+DUPLICATE_DONE = "כפילות: כבר נקלטה, לא נשמרה שוב"
+
+
+def mails_to_move(entries: dict, tags: set[str]) -> list[str]:
+    """Her rule, from the log of every attachment: a mail goes to "<לקוח> טופל" only when
+    every invoice in it is handled (in an import file, a duplicate, or turned down) and at
+    least one was a real invoice. A mail with no invoice, or only a חשבון עסקה, stays."""
+    ready = []
+    for tag in sorted(tags - {""}):
+        mine = [e for k, e in entries.items() if sources.tag_of(k) == tag]
+        handled = all(e["status"] in (journal.EXPORTED, journal.REJECTED) for e in mine)
+        invoice = any(e["status"] == journal.EXPORTED or str(e.get("todo", "")).startswith(DUPLICATE_DONE)
+                      for e in mine)
+        if mine and handled and invoice:
+            ready.append(tag)
+    return ready
+
+
+def _move_handled(cfg: dict, state: dict, rows: list[dict]) -> str:
+    if not cfg.get("done_folder") or cfg.get("source") != "outlook":
+        return ""
+    ids = state.get("entry_ids", {})
+    try:
+        tags = mails_to_move(journal.load(HOME), {sources.tag_of(r["key"]) for r in rows})
+    except Exception:
+        return "\n\nהמיילים לא הועברו לתיקיית טופל (היומן לא נקרא). החשבוניות עצמן טופלו כרגיל."
+    ready = [ids[t] for t in tags if t in ids]
+    try:
+        moved, problems = sources.move_mails(ready, cfg["done_folder"])
+    except Exception as e:
+        return f"\n\nהמיילים לא הועברו לתיקיית טופל ({e}). החשבוניות עצמן טופלו כרגיל."
+    text =f"\n\n{moved} מיילים הועברו ל: {cfg['done_folder']}" if moved else ""
+    return text + ("\n" + "\n".join(dict.fromkeys(problems)) if problems else "")
 
 
 def show_journal() -> None:

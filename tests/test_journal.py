@@ -69,7 +69,8 @@ def test_export_moves_rows_to_their_real_status(home, capsys):
     exported = [r for r in rows if r["status"] == journal.EXPORTED]
     assert [(r["invoice_number"], r["export_file"]) for r in exported] == [("20261045", out.name)]
     forwarded = [r for r in rows if r["invoice_number"] == "20261045" and r is not exported[0]]
-    assert forwarded[0]["status"] == journal.PENDING and "כפילות" in forwarded[0]["todo"]
+    # her rule: the same invoice a second time is not saved again, and is closed and listed
+    assert forwarded[0]["status"] == journal.REJECTED and forwarded[0]["todo"] == main.DUPLICATE_DONE
     by_supplier = {r["supplier_name"]: r for r in rows}
     office, exempt = by_supplier['אופיס סנטר ישיר בע"מ'], by_supplier["יעל ברק - עיצוב גרפי"]
     assert office["status"] == journal.PENDING and "חסר כרטיס ספק" in office["todo"]

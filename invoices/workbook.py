@@ -36,16 +36,22 @@ REVIEW_COLS = [
     ("file", "קובץ"),
     ("key", "מזהה"),
     ("sender", "נשלח מ"),
+    ("original", "קובץ מקור"),     # the whole PDF, when this invoice was cut out of it
 ]
 COL = {k: i for i, (k, _) in enumerate(REVIEW_COLS)}
 
 # Column titles in import.xlsx: Hashavshevet's own field names, so the one-time mapping
 # ("שידוך") in the import window is obvious; the mapping is then saved and reused.
-IMPORT_COLS = ["סוג תנועה", "אסמכתא 1", "אסמכתא 2", "תאריך אסמכתא", "תאריך ערך", "פרטים",
-               "חשבון חובה 1", "סכום חובה 1", "חשבון חובה 2", "סכום חובה 2",
-               "חשבון זכות 1", "סכום זכות 1", "חשבון זכות 2", "סכום זכות 2",
-               "מספר עמ", "מספר הקצאה"]
-TEXT_COLS = (0, 1, 2, 6, 8, 10, 12, 14, 15)   # keys & references as text, per the H-ERP guide
+# The exact layout of the file that was imported for real at her office (22/22 lines),
+# with the saved field mapping (WPR) that names these columns.
+IMPORT_COLS = ["סוג תנועה", "אסמכתא 1", "אסמכתא 2", "תאריך אסמכתא", "תאריך ערך", "קוד תמחיר", "קוד מטבע",
+               "פרטים", "חשבון חובה 1", "חשבון חובה 2", "חשבון זכות 1", "חשבון זכות 2",
+               "סכום חובה 1", "סכום חובה 2", "סכום זכות 1", "סכום זכות 2",
+               "תאריך 3", "אסמכתא 3", "כמות", "הערות", "סניף", "מספר עמ", "מספר הקצאה"]
+TEXT_COLS = tuple(IMPORT_COLS.index(c) for c in (
+    "סוג תנועה", "אסמכתא 1", "אסמכתא 2", "חשבון חובה 1", "חשבון חובה 2", "חשבון זכות 1", "חשבון זכות 2",
+    "מספר עמ", "מספר הקצאה"))   # keys & references as text, per the H-ERP guide
+SHEET = "Journal"
 
 
 def details_text(invoice_date, description: str, supplier_name: str) -> str:
@@ -91,8 +97,8 @@ def write_review(rows: list[dict], path: Path) -> None:
         fill = YELLOW if r.get("notes") else GREEN
         for cell in ws[ws.max_row]:
             cell.fill = fill
-    widths = [12, 26, 13, 12, 12, 14, 12, 12, 10, 12, 14, 40, 45, 30, 8, 28]
-    for col, w in zip("ABCDEFGHIJKLMNOP", widths):
+    widths = [12, 26, 13, 12, 12, 14, 12, 12, 10, 12, 14, 40, 45, 30, 8, 28, 30]
+    for col, w in zip("ABCDEFGHIJKLMNOPQ", widths):
         ws.column_dimensions[col].width = w
     for row in ws.iter_rows(min_row=2):
         row[COL["invoice_date"]].number_format = "DD/MM/YYYY"
@@ -131,7 +137,8 @@ def _d(v) -> Decimal:
     return Decimal(str(v or 0)).quantize(Decimal("0.01"))
 
 
-def write_import(rows: list[dict], vat_account: str, path: Path, ttype: str = "") -> None:
+def write_import(rows: list[dict], vat_account: str, path: Path, ttype: str = "",
+                 range_name: str = "invoices") -> None:
     """One journal line per invoice: expense + input VAT debited, supplier credited.
 
     A credit note (negative total) is the mirror image: supplier debited, expense and
@@ -141,39 +148,43 @@ def write_import(rows: list[dict], vat_account: str, path: Path, ttype: str = ""
     """
     wb = Workbook()
     ws = wb.active
-    ws.title = "תנועות"
+    ws.title = SHEET
     ws.append(IMPORT_COLS)
     for r in rows:
         net, vat, total = _d(r["net"]), _d(r["vat"]), _d(r["total"])
         ref = journal_reference(r["invoice_number"])  # אסמכתא: no prefix, numeric, max 9
         d = r["invoice_date"]
         d = d.date() if hasattr(d, "date") else d
-        head = [ttype if vat else "", ref, ref, d, d]
-        tail = [r.get("supplier_id") or "", r.get("allocation_number") or ""]
         vat_acc = vat_account if vat else ""
-        # Unused amount cells hold 0, never blank: ODBC guesses each column's type from its
-        # first rows, and a column that starts out blank reads a later value as NULL.
         name = r.get("supplier_name") or ""
         if total >= 0:
             details = r.get("details") or details_text(d, "", name)
-            ws.append(head + [details[:50],
-                              r["expense_account"], float(net), vat_acc, float(vat),
-                              r["supplier_account"], float(total), "", 0.0] + tail)
+            debit, credit = (r["expense_account"], float(net), vat_acc, float(vat)), \
+                            (r["supplier_account"], float(total), "", 0.0)
         else:
             details = r.get("details") or details_text(d, "זיכוי", name)
-            ws.append(head + [details[:50],
-                              r["supplier_account"], float(-total), "", 0.0,
-                              r["expense_account"], float(-net), vat_acc, float(-vat)] + tail)
+            debit, credit = (r["supplier_account"], float(-total), "", 0.0), \
+                            (r["expense_account"], float(-net), vat_acc, float(-vat))
+        line = {"סוג תנועה": ttype if vat else "", "אסמכתא 1": ref, "אסמכתא 2": ref,
+                "תאריך אסמכתא": d, "תאריך ערך": d, "פרטים": details[:50],
+                "חשבון חובה 1": debit[0], "סכום חובה 1": debit[1], "חשבון חובה 2": debit[2], "סכום חובה 2": debit[3],
+                "חשבון זכות 1": credit[0], "סכום זכות 1": credit[1], "חשבון זכות 2": credit[2], "סכום זכות 2": credit[3],
+                "מספר עמ": r.get("supplier_id") or "", "מספר הקצאה": r.get("allocation_number") or ""}
+        # Unused amount cells hold 0, never blank: ODBC guesses each column's type from its
+        # first rows, and a column that starts out blank reads a later value as NULL.
+        ws.append([line.get(c, "") for c in IMPORT_COLS])
     last = ws.max_row
     for row in ws.iter_rows(min_row=2):
         for idx in TEXT_COLS:
             row[idx].number_format = "@"
             if row[idx].value is not None:
                 row[idx].value = str(row[idx].value)
-        row[3].number_format = row[4].number_format = "DD/MM/YYYY"
+        for c in ("תאריך אסמכתא", "תאריך ערך"):
+            row[IMPORT_COLS.index(c)].number_format = "DD/MM/YYYY"
     _no_formulas(ws)
-    ref = f"'{ws.title}'!$A$1:$P${last}"
-    wb.defined_names["invoices"] = DefinedName("invoices", attr_text=ref)
+    end = ws.cell(1, len(IMPORT_COLS)).column_letter
+    ref = f"'{ws.title}'!$A$1:${end}${last}"
+    wb.defined_names[range_name] = DefinedName(range_name, attr_text=ref)
     wb.save(path)
 
 

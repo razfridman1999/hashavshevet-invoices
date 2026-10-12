@@ -211,7 +211,12 @@ def orientation_score(text: str) -> int:
 
 
 def extract(path: Path, own_ids: set[str] = frozenset()) -> Invoice:
-    text = pdf_text(path)
+    return extract_from_text(pdf_text(path), str(path), own_ids)
+
+
+def extract_from_text(text: str, source: str, own_ids: set[str] = frozenset()) -> Invoice:
+    """The same reading for any piece of text: a whole PDF, or one page of it."""
+    path = source
     if len(text.strip()) < 30:
         inv = Invoice(source=str(path), has_text=False)
         inv.warnings.append("PDF סרוק / בלי טקסט, צריך הזנה ידנית")

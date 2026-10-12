@@ -46,6 +46,12 @@ class Mail:
         self.SenderEmailAddress = "billing@example.co.il"
         self.ReceivedTime = datetime.now(timezone.utc) - timedelta(days=days_ago)
         self.Attachments = Attachments(files)
+        self.parent = None
+
+    def Move(self, folder):
+        self.parent.Items.remove(self)
+        folder.Items.append(self)
+        self.parent = folder
 
 
 class Items(list):
@@ -60,14 +66,42 @@ class Items(list):
         self.sort(key=lambda m: m.ReceivedTime, reverse=descending)
 
 
+class Folders(dict):
+    """Folders["name"] like Outlook, plus the 1-based Count / Item(i)."""
+    @property
+    def Count(self):
+        return len(self)
+
+    def Item(self, i):
+        return list(self.values())[i - 1]
+
+
 class Folder:
-    def __init__(self, items, sub=None):
+    def __init__(self, items, sub=None, name=""):
+        self.Name = name
         self.Items = Items(items)
-        self.Folders = sub or {}
+        self.Folders = Folders(sub or {})
+        for n, f in self.Folders.items():
+            f.Name = n
+        for m in self.Items:
+            m.parent = self
 
 
 def install_fake_outlook(monkeypatch, inbox: Folder):
-    ns = types.SimpleNamespace(GetDefaultFolder=lambda n: inbox if n == 6 else None)
+    def get_item(eid):
+        def walk(folder):
+            for m in folder.Items:
+                if m.EntryID == eid:
+                    return m
+            for f in folder.Folders.values():
+                found = walk(f)
+                if found:
+                    return found
+        found = walk(inbox)
+        if not found:
+            raise Exception("not found")
+        return found
+    ns = types.SimpleNamespace(GetDefaultFolder=lambda n: inbox if n == 6 else None, GetItemFromID=get_item)
     app = types.SimpleNamespace(GetNamespace=lambda name: ns)
     client = types.SimpleNamespace(Dispatch=lambda prog: app)
     win32com = types.ModuleType("win32com")
@@ -139,3 +173,31 @@ def test_subfolder(tmp_path, monkeypatch):
     inbox = Folder([], sub={"חשבוניות": Folder([Mail(8, "חשבונית", ["a.pdf"])])})
     install_fake_outlook(monkeypatch, inbox)
     assert len(sources.from_outlook(tmp_path, 45, "חשבוניות")) == 1
+
+
+def test_client_folder_is_read_whole_and_without_the_invoice_hint(tmp_path, monkeypatch):
+    """A client's folder holds only its invoices: no 45-day limit, no "חשבונית" in the subject needed."""
+    client = Folder([Mail(20, "מצורף", ["scan.pdf"], days_ago=400), Mail(21, "fw", ["b.pdf"], days_ago=2)])
+    install_fake_outlook(monkeypatch, Folder([], sub={"לקוח א": client}))
+    got = sources.from_outlook(tmp_path, 45, "לקוח א")
+    assert len(got) == 2 and all(f.entry_id for f in got)
+
+
+def test_backslash_paths_like_her_folder_table(tmp_path, monkeypatch):
+    inner = Folder([Mail(22, "x", ["a.pdf"])])
+    install_fake_outlook(monkeypatch, Folder([], sub={"חשבוניות": Folder([], sub={"לקוח ב": inner})}))
+    assert len(sources.from_outlook(tmp_path, 0, "חשבוניות\\לקוח ב")) == 1
+    assert sources.folder_paths() == ["חשבוניות", "חשבוניות\\לקוח ב"]
+
+
+def test_handled_mail_moves_to_the_done_folder(tmp_path, monkeypatch):
+    done = Folder([])
+    client = Folder([Mail(23, "x", ["a.pdf"]), Mail(24, "y", ["b.pdf"])], sub={"טופל": done})
+    install_fake_outlook(monkeypatch, Folder([], sub={"לקוח": client}))
+    got = sources.from_outlook(tmp_path, 0, "לקוח")
+    first = next(f for f in got if f.subject == "x")
+    assert sources.tag_of(first.mail_id) == sources.mail_tag(first.entry_id)
+    assert sources.move_mails([first.entry_id], "לקוח/טופל") == (1, [])
+    assert [m.Subject for m in done.Items] == ["x"] and [m.Subject for m in client.Items] == ["y"]
+    moved, problems = sources.move_mails([first.entry_id], "אין כזו")
+    assert moved == 0 and problems

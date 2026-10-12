@@ -68,16 +68,77 @@
   section.report { display: none; }
   section.report textarea { display: block; width: calc(100% - 32px); margin: 0 16px; font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; }
   .gone { display: none; padding: 40px; text-align: center; font-size: 18px; }
+  header select { font: inherit; font-size: 16px; padding: 6px 10px; border-radius: 8px; border: 0; max-width: 260px; }
+  header .who { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+  header .who button { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.4); border-radius: 8px;
+                       padding: 6px 12px; font: inherit; font-size: 14px; cursor: pointer; }
+  section.settings { display: none; margin-bottom: 22px; }
+  section.settings h2 { font-size: 18px; margin: 0; padding: 14px 16px 4px; }
+  .form { display: grid; grid-template-columns: 220px 1fr; gap: 10px 14px; padding: 12px 16px; align-items: center; }
+  .form label { font-weight: 600; font-size: 14px; }
+  .form .field { display: flex; gap: 8px; }
+  .form input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 14px; }
+  .form .field button { white-space: nowrap; border: 1px solid var(--line); background: #f7f8fa; border-radius: 8px; padding: 0 12px; font: inherit; font-size: 14px; cursor: pointer; }
+  .form .hint { grid-column: 2; margin-top: -6px; }
+  .actions { display: flex; gap: 12px; align-items: center; padding: 4px 16px 16px; flex-wrap: wrap; }
+  .newclient { display: none; gap: 8px; padding: 0 16px 16px; }
+  .newclient input { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
+  header { flex-wrap: wrap; }
+  .form > * { min-width: 0; }
+  @media (max-width: 760px) {
+    .form { grid-template-columns: 1fr; } .form .hint { grid-column: 1; }
+    .form .field { flex-wrap: wrap; } .form .field button { padding: 8px 12px; }
+    header { padding: 14px 16px; } header .who { flex-wrap: wrap; } main { padding: 16px 16px 32px; }
+  }
   @media (max-width: 760px) { .cards, .steps { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
-<header><h1>חשבוניות לחשבשבת</h1><span class="ver" id="ver"></span></header>
+<header>
+  <h1>חשבוניות לחשבשבת</h1>
+  <div class="who"><label for="client">לקוח:</label><select id="client"></select>
+    <button id="settings-open">הגדרות הלקוח</button><button id="client-new">+ לקוח חדש</button></div>
+  <span class="ver" id="ver"></span>
+</header>
 <main id="app">
   <div class="banner" id="setup-banner">
-    <span>לפני הכל צריך למלא הגדרות (פעם אחת בלבד).</span>
-    <button class="main" data-run="setup">פתיחת ההגדרות</button>
+    <span>ללקוח הזה עוד חסרות הגדרות (פעם אחת בלבד).</span>
+    <button class="main" id="settings-open2">מילוי ההגדרות</button>
   </div>
+
+  <div class="newclient" id="newclient">
+    <input id="newclient-name" maxlength="60" placeholder="שם הלקוח, למשל כמו בטבלת התיקיות">
+    <button class="main" id="newclient-add">הוספה</button>
+  </div>
+
+  <section class="list settings" id="settings">
+    <h2>הגדרות הלקוח: <span id="settings-title"></span></h2>
+    <p class="hint pad">לכל לקוח הגדרות משלו. כרטיסי ספק וס.ת לא עוברים בין לקוחות.</p>
+    <div class="form">
+      <label for="f-client_name">שם הלקוח</label><div class="field"><input id="f-client_name" maxlength="60"></div>
+      <label for="f-outlook_folder">תיקיית החשבוניות באאוטלוק</label>
+      <div class="field"><input id="f-outlook_folder" list="ol-folders"><button data-folders>טעינת התיקיות מאאוטלוק</button></div>
+      <span class="hint">בתוך "דואר נכנס". הכלי קורא את כל התיקייה, מההתחלה ועד הסוף.</span>
+      <label for="f-done_folder">תיקיית "טופל" באאוטלוק</label><div class="field"><input id="f-done_folder" list="ol-folders"></div>
+      <span class="hint">לשם עובר מייל אחרי שכל החשבוניות שבו נשמרו. ריק = המיילים נשארים במקום.</span>
+      <label for="f-own_company_ids">ח.פ של הלקוח</label><div class="field"><input id="f-own_company_ids" inputmode="numeric"></div>
+      <label for="f-vat_account">כרטיס מע"מ תשומות</label><div class="field"><input id="f-vat_account"></div>
+      <label for="f-ttype">ס.ת לחשבוניות ספקים</label><div class="field"><input id="f-ttype"></div>
+      <label for="f-hid">מזהה החברה בחשבשבת</label><div class="field"><input id="f-hid" inputmode="numeric"></div>
+      <span class="hint">המספר שבשם הטבלה jurnal, למשל 305. איתו נוצר קובץ שיוך (WPR) ואין צורך לשדך שדות.</span>
+      <label for="f-supplier_index">קובץ אינדקס ספקים</label>
+      <div class="field"><input id="f-supplier_index"><button data-pick="file" data-for="f-supplier_index">בחירה...</button></div>
+      <label for="f-files_folder">תיקיית החשבוניות לקליטה</label>
+      <div class="field"><input id="f-files_folder"><button data-pick="folder" data-for="f-files_folder">בחירה...</button></div>
+      <span class="hint">כאן נפתחת תיקייה לכל קליטה (למשל 12.10.26) עם כל חשבונית בשם "ספק מספר".</span>
+      <label for="f-rep_folder">תיקיית הלקוח ב-REP</label>
+      <div class="field"><input id="f-rep_folder"><button data-pick="folder" data-for="f-rep_folder">בחירה...</button></div>
+      <span class="hint">קובץ הקליטה וקובץ השיוך נשמרים ב: חשבוניות שנקלטו\תאריך.</span>
+    </div>
+    <datalist id="ol-folders"></datalist>
+    <div class="actions"><button class="main" id="settings-save">שמירה</button>
+      <button class="link" id="settings-close">סגירה</button><span id="settings-msg"></span></div>
+  </section>
 
   <div class="cards">
     <button class="card pending" data-filter="ממתינה לבדיקה"><div class="n" id="c-pending">0</div><div class="l">ממתינות לבדיקה</div></button>
@@ -152,7 +213,7 @@
   <footer>
     <button class="link" data-run="journal">היומן באקסל</button>
     <button class="link" data-run="folder">פתיחת התיקייה</button>
-    <button class="link" data-run="setup">הגדרות</button>
+    <button class="link" id="settings-open3">הגדרות הלקוח</button>
     <button class="link" data-run="guide">מדריך</button>
     <button class="link" id="report-open">דיווח לרז על בעיה</button>
   </footer>
@@ -163,13 +224,24 @@
 "use strict";
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
 const PILL = {"ממתינה לבדיקה": "p", "מוכנה לייצוא": "r", "בקובץ קליטה": "e", "לא תיקלט": "x"};
-let items = [], filter = "פתוחות", working = false;
+const FIELDS = ["client_name", "outlook_folder", "done_folder", "own_company_ids", "vat_account", "ttype", "hid",
+                "supplier_index", "files_folder", "rep_folder"];
+let items = [], filter = "פתוחות", working = false, settings = {};
 
 const $ = id => document.getElementById(id);
+
+// the chosen client is remembered in this browser only; the server decides what exists
+let CLIENT = "";
+try { CLIENT = localStorage.getItem("client") || ""; } catch (e) { CLIENT = ""; }
+function setClient(id) {
+  CLIENT = id;
+  try { localStorage.setItem("client", id); } catch (e) { /* private window: just not remembered */ }
+}
 
 async function api(path, method, body) {
   const headers = {"X-Token": TOKEN};
   if (body !== undefined) headers["Content-Type"] = "application/json";
+  path += (path.includes("?") ? "&" : "?") + "c=" + encodeURIComponent(CLIENT);
   const r = await fetch(path, {method: method || "GET", headers, body: body === undefined ? undefined : JSON.stringify(body)});
   if (r.status === 403) throw new Error("forbidden");
   return r.json();
@@ -257,6 +329,12 @@ async function refresh() {
     $("c-ready").textContent = s.counts.ready;
     $("c-exported").textContent = s.counts.exported_month;
     $("setup-banner").style.display = s.configured ? "none" : "flex";
+    if (s.client !== CLIENT) setClient(s.client);      // a client that no longer exists
+    const sel = $("client");
+    sel.replaceChildren(...s.clients.map(c => { const o = el("option", c.name); o.value = c.id; return o; }));
+    sel.value = s.client;
+    settings = s.settings;
+    $("settings-title").textContent = (s.clients.find(c => c.id === s.client) || {}).name || "";
     items = s.items;
     render();
     renderMissing(s.missing);
@@ -289,7 +367,71 @@ async function run(action) {
   }
 }
 
+function openSettings() {
+  for (const f of FIELDS) $("f-" + f).value = settings[f] || "";
+  $("settings-msg").textContent = "";
+  $("settings").style.display = "block";
+  $("settings").scrollIntoView({block: "start"});
+}
+
+async function settingsClick(b) {
+  if (["settings-open", "settings-open2", "settings-open3"].includes(b.id)) { openSettings(); return true; }
+  if (b.id === "settings-close") { $("settings").style.display = "none"; return true; }
+  if (b.id === "client-new") { $("newclient").style.display = "flex"; $("newclient-name").focus(); return true; }
+  if (b.id === "settings-save") {
+    const data = {};
+    for (const f of FIELDS) data[f] = $("f-" + f).value;
+    b.disabled = true;
+    try {
+      const r = await api("/api/settings", "POST", data);
+      $("settings-msg").textContent = r.text;
+      if (r.ok) refresh();
+    } catch (err) { $("settings-msg").textContent = "אין חיבור למערכת."; }
+    finally { b.disabled = false; }
+    return true;
+  }
+  if (b.id === "newclient-add") {
+    try {
+      const r = await api("/api/clients", "POST", {name: $("newclient-name").value});
+      if (!r.ok) { show({ok: false, text: r.text}); return true; }
+      $("newclient").style.display = "none";
+      $("newclient-name").value = "";
+      setClient(r.id);
+      await refresh();
+      openSettings();
+    } catch (err) { show({ok: false, text: "אין חיבור למערכת."}); }
+    return true;
+  }
+  if (b.dataset.folders !== undefined) {
+    b.disabled = true;
+    try {
+      const r = await api("/api/outlook-folders", "POST");
+      $("ol-folders").replaceChildren(...r.folders.map(f => { const o = el("option"); o.value = f; return o; }));
+      $("settings-msg").textContent = r.ok ? `נמצאו ${r.folders.length} תיקיות. מתחילים להקליד בשדה ובוחרים.` : r.text;
+    } catch (err) { $("settings-msg").textContent = "אין חיבור למערכת."; }
+    finally { b.disabled = false; }
+    return true;
+  }
+  if (b.dataset.pick) {
+    try {
+      const r = await api("/api/pick?kind=" + b.dataset.pick, "POST");
+      if (r.ok) $(b.dataset.for).value = r.path;
+    } catch (err) { $("settings-msg").textContent = "אין חיבור למערכת."; }
+    return true;
+  }
+  return false;
+}
+
+$("client").addEventListener("change", e => {
+  setClient(e.target.value);
+  $("settings").style.display = "none";
+  $("result").style.display = "none";
+  refresh();
+});
+
 document.addEventListener("click", async e => {
+  const sb = e.target.closest("button");
+  if (sb && await settingsClick(sb)) return;
   const row = e.target.closest("tr.clickable");
   if (row) {
     try { show(await api("/api/pdf?key=" + encodeURIComponent(row.dataset.key), "POST")); }

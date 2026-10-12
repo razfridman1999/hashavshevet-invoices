@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import insights, journal, main, report, ui
+from . import clients, insights, journal, main, report, sources, ui
 
 APP = Path(__file__).resolve().parents[1]
 PAGE = Path(__file__).with_name("app.html")
@@ -37,20 +37,26 @@ def version() -> str:
         return ""
 
 
-def _latest(pattern: str) -> Path | None:
-    files = sorted(main.HOME.glob(pattern), key=lambda p: p.stat().st_mtime)
+def _latest(pattern: str, home: Path | None = None) -> Path | None:
+    files = sorted((home or main.HOME).glob(pattern), key=lambda p: p.stat().st_mtime)
     return files[-1] if files else None
 
 
-def status() -> dict:
-    cfg = {**main.DEFAULT_CONFIG, **main.load(main.CONFIG, {})}
-    entries = journal.load(main.HOME)
+def status(home: Path | None = None, root: Path | None = None, client_id: str = "") -> dict:
+    home = home or main.HOME
+    cfg = {**main.DEFAULT_CONFIG, **main.load(home / "config.json", {})}
+    entries = journal.load(home)
     month = datetime.now().strftime("%Y-%m")
     items = sorted(entries.items(), key=lambda kv: kv[1]["updated"], reverse=True)
     items.sort(key=lambda kv: journal.ORDER.get(kv[1]["status"], 9))
-    review, imported = _latest("לבדיקה *.xlsx"), _latest("לקליטה בחשבשבת *.xlsx")
+    review = _latest("לבדיקה *.xlsx", home)
+    last = main.load(home / "state.json", {}).get("last_import")
+    imported = Path(last) if last else _latest("לקליטה בחשבשבת *.xlsx", home)
     return {
         "version": version(),
+        "client": client_id,
+        "clients": clients.list_clients(root or home),
+        "settings": clients.settings(home),
         "configured": bool(cfg["own_company_ids"] and cfg["vat_account"] and cfg["ttype"]),
         "counts": {
             "pending": sum(e["status"] == journal.PENDING for _, e in items),
@@ -68,11 +74,12 @@ def status() -> dict:
     }
 
 
-def open_pdf(key: str) -> dict:
+def open_pdf(key: str, home: Path | None = None) -> dict:
     """Only a PDF the tool itself saved, named by its log entry - never a path the
     request supplies, so the page cannot be used to open anything else."""
-    entry = journal.load(main.HOME).get(key)
-    inbox = (main.HOME / "קבצים").resolve()
+    home = home or main.HOME
+    entry = journal.load(home).get(key)
+    inbox = (home / "קבצים").resolve()
     path = Path(entry["file"]).resolve() if entry and entry.get("file") else None
     if not path or path.suffix.lower() != ".pdf" or inbox not in path.parents or not path.exists():
         return {"ok": False, "text": "הקובץ של החשבונית הזו לא נמצא (אולי נמחק מהתיקייה)."}
@@ -80,11 +87,51 @@ def open_pdf(key: str) -> dict:
     return {"ok": True, "text": ""}
 
 
-def make_report(note: str) -> dict:
-    path = report.write(main.HOME, version(), note[:4000])
+def make_report(note: str, home: Path | None = None) -> dict:
+    path = report.write(home or main.HOME, version(), note[:4000])
     _open(path)
     return {"ok": True, "text": f"הדוח נשמר ונפתח לבדיקה:\n{path}\n\n"
                                 "אין בו שמות, מספרים או סכומים מהחשבוניות. אפשר לשלוח אותו לרז בוואטסאפ או במייל."}
+
+
+PICK = """
+import sys, tkinter as tk
+from pathlib import Path
+from tkinter import filedialog
+root = tk.Tk(); root.withdraw(); root.attributes("-topmost", True)
+if sys.argv[1] == "folder":
+    p = filedialog.askdirectory(title="בחירת תיקייה")
+else:
+    p = filedialog.askopenfilename(title="בחירת קובץ", filetypes=[("Excel", "*.xlsx *.xls"), ("הכול", "*.*")])
+Path(sys.argv[2]).write_text(str(Path(p)) if p else "", encoding="utf-8")
+"""
+
+
+def pick(kind: str, home: Path) -> dict:
+    """A Windows folder/file dialog, so she never types a path. Its own process: Tk wants
+    the main thread, and a request runs in a side thread."""
+    if os.environ.get("INVOICES_NO_OPEN"):
+        return {"ok": False, "path": ""}
+    out = home / "pick.tmp"
+    try:
+        subprocess.run([sys.executable, "-c", PICK, "folder" if kind == "folder" else "file", str(out)],
+                       timeout=600, check=False)
+        path = out.read_text(encoding="utf-8").strip() if out.exists() else ""
+    except (OSError, subprocess.TimeoutExpired):
+        path = ""
+    finally:
+        out.unlink(missing_ok=True)
+    return {"ok": bool(path), "path": path}
+
+
+def outlook_folders() -> dict:
+    com = _com_init()
+    try:
+        return {"ok": True, "folders": sources.folder_paths()}
+    except Exception:
+        return {"ok": False, "folders": [], "text": "לא הצלחתי לקרוא את התיקיות מאאוטלוק. לבדוק שאאוטלוק פתוח."}
+    finally:
+        _com_done(com)
 
 
 def _open(path: Path) -> None:
@@ -155,6 +202,7 @@ def run_action(name: str) -> dict:
 
 class App:
     def __init__(self, port: int = 0):
+        self.root = main.HOME                 # the main folder; other clients live under it
         self.token = secrets.token_urlsafe(24)
         self.busy = threading.Lock()          # one action at a time: they share ui and files
         self.last_seen = time.monotonic()
@@ -185,6 +233,31 @@ class App:
                 self._send(code, json.dumps(data, ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
 
+            def _client(self) -> tuple[str, Path | None]:
+                cid = (parse_qs(urlparse(self.path).query).get("c") or [""])[0]
+                return cid, clients.home_of(app.root, cid)
+
+            def _drain(self) -> None:
+                """Read and drop what was sent before refusing it: answering over an unread body
+                makes Windows reset the connection, and the caller never sees the answer."""
+                left = min(int(self.headers.get("Content-Length") or 0), 1_000_000)
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 65_536))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+
+            def _body(self) -> dict | None:
+                size = int(self.headers.get("Content-Length") or 0)
+                if size > 64_000:
+                    self._drain()
+                    return None
+                try:
+                    data = json.loads(self.rfile.read(size) or b"{}")
+                except ValueError:
+                    data = {}
+                return data if isinstance(data, dict) else {}
+
             def do_GET(self):
                 if not self._allowed():
                     return self._send(403, b"forbidden", "text/plain")
@@ -192,31 +265,45 @@ class App:
                 path = urlparse(self.path).path
                 if path == "/":
                     return self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
+                cid, home = self._client()
+                if home is None:
+                    cid, home = "", app.root          # a client deleted by hand: back to the main one
                 if path == "/api/status":
-                    return self._json(status())
+                    return self._json(status(home, app.root, cid))
                 self._send(404, b"not found", "text/plain")
 
             def do_POST(self):
                 if not self._allowed() or not self.headers.get("X-Token"):   # POST: header only
+                    self._drain()
                     return self._send(403, b"forbidden", "text/plain")
                 app.last_seen = time.monotonic()
                 url = urlparse(self.path)
+                cid, home = self._client()
+                if home is None:
+                    return self._json({"ok": False, "text": "הלקוח הזה לא נמצא. לבחור לקוח מהרשימה."}, 404)
                 if url.path == "/api/pdf":
-                    return self._json(open_pdf((parse_qs(url.query).get("key") or [""])[0]))
-                if url.path == "/api/report":
-                    size = int(self.headers.get("Content-Length") or 0)
-                    if size > 64_000:
+                    return self._json(open_pdf((parse_qs(url.query).get("key") or [""])[0], home))
+                if url.path in ("/api/report", "/api/settings", "/api/clients"):
+                    data = self._body()
+                    if data is None:
                         return self._send(413, b"too large", "text/plain")
-                    try:
-                        note = json.loads(self.rfile.read(size) or b"{}").get("note", "")
-                    except ValueError:
-                        note = ""
-                    return self._json(make_report(str(note)))
+                    if url.path == "/api/report":
+                        return self._json(make_report(str(data.get("note", "")), home))
+                    if url.path == "/api/settings":
+                        ok, text = clients.save_settings(home, data)
+                        return self._json({"ok": ok, "text": text})
+                    new_id, problem = clients.add(app.root, str(data.get("name", "")))
+                    return self._json({"ok": new_id is not None, "id": new_id, "text": problem})
+                if url.path == "/api/outlook-folders":
+                    return self._json(outlook_folders())
+                if url.path == "/api/pick":
+                    return self._json(pick((parse_qs(url.query).get("kind") or [""])[0], home))
                 if not url.path.startswith("/api/run/"):
                     return self._send(404, b"not found", "text/plain")
                 if not app.busy.acquire(blocking=False):
                     return self._json({"ok": False, "text": "פעולה אחרת עוד רצה. לחכות שתסתיים."}, 409)
                 try:
+                    main.use(home)                    # the action works inside this client's folder
                     result = run_action(url.path.rsplit("/", 1)[1])
                 finally:
                     app.busy.release()

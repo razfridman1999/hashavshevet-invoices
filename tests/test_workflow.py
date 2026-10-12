@@ -50,8 +50,10 @@ def standard_pass(row, name):
         row[3].value, row[4].value = ACCOUNTS[row[2].value]
 
 
-def import_rows(path: Path) -> list[tuple]:
-    return list(openpyxl.load_workbook(path).active.iter_rows(min_row=2, values_only=True))
+def import_rows(path: Path) -> list[dict]:
+    """By Hashavshevet's field names: the column order is not what the import relies on."""
+    rows = list(openpyxl.load_workbook(path).active.iter_rows(values_only=True))
+    return [dict(zip(rows[0], r)) for r in rows[1:]]
 
 
 def test_full_cycle_balances_and_learns(home):
@@ -61,9 +63,9 @@ def test_full_cycle_balances_and_learns(home):
     rows = import_rows(out)
     assert len(rows) == 5
     for r in rows:  # every journal line balances: debits == credits
-        assert round((r[7] or 0) + (r[9] or 0), 2) == round((r[11] or 0) + (r[13] or 0), 2)
-    credit = next(r for r in rows if "זיכוי" in r[5])
-    assert (credit[6], credit[10], credit[12]) == ("40013", "81400", "77100")  # supplier debited
+        assert round((r["סכום חובה 1"] or 0) + (r["סכום חובה 2"] or 0), 2) == round((r["סכום זכות 1"] or 0) + (r["סכום זכות 2"] or 0), 2)
+    credit = next(r for r in rows if "זיכוי" in r["פרטים"])
+    assert (credit["חשבון חובה 1"], credit["חשבון זכות 1"], credit["חשבון זכות 2"]) == ("40013", "81400", "77100")  # supplier debited
     assert json.loads((home / "suppliers.json").read_text(encoding="utf-8"))[S[0]]["supplier_account"] == "40010"
     # second run: only the scan, which she has not handled yet, comes back
     review2 = main.fetch()
@@ -90,7 +92,7 @@ def test_duplicate_approved_twice_enters_once(home):
             row[3].value, row[4].value = ACCOUNTS[S[0]]
     fill(main.fetch(), approve_everything)
     rows = import_rows(main.export())
-    assert sum(1 for r in rows if r[1] == "20261045") == 1
+    assert sum(1 for r in rows if r["אסמכתא 1"] == "20261045") == 1
 
 
 def test_hand_edited_amount_that_does_not_balance_is_held_back(home):
@@ -100,7 +102,7 @@ def test_hand_edited_amount_that_does_not_balance_is_held_back(home):
             row[9].value = 999.99          # total no longer equals net + VAT
     fill(main.fetch(), bad_edit)
     rows = import_rows(main.export())
-    assert all(r[1] != "20261045" for r in rows)
+    assert all(r["אסמכתא 1"] != "20261045" for r in rows)
     assert len(rows) == 4
 
 
@@ -135,7 +137,7 @@ def test_blank_invoice_number_is_held_back(home):
         if name.startswith("01"):
             row[5].value = None
     fill(main.fetch(), blank)
-    assert all("חשמל" not in (r[5] or "") for r in import_rows(main.export()))
+    assert all("חשמל" not in (r["פרטים"] or "") for r in import_rows(main.export()))
 
 
 def test_corrupt_pdf_does_not_stop_the_others(home):
@@ -167,9 +169,9 @@ def test_hand_added_row_exports_once_and_does_not_crash(home):
     ws.cell(ws.max_row, 7).value = __import__("datetime").datetime(2026, 10, 2)
     wb.save(review)
     first = import_rows(main.export(review))
-    assert sum(1 for r in first if r[1] == "4410") == 1
+    assert sum(1 for r in first if r["אסמכתא 1"] == "4410") == 1
     second = main.export(review)
-    assert second is None or all(r[1] != "4410" for r in import_rows(second))
+    assert second is None or all(r["אסמכתא 1"] != "4410" for r in import_rows(second))
 
 
 @pytest.mark.parametrize("suffix", [".xlsx", ".xls"])
