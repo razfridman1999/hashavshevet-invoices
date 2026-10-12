@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>חשבוניות לחשבשבת - מדריך</title>
+<style>
+  :root { --ink:#1d2733; --muted:#5b6673; --accent:#1f4e78; --green:#e2f0d9; --yellow:#fff2cc; --line:#d9dee4; }
+  body { font-family: Arial, "Segoe UI", sans-serif; color: var(--ink); background:#fff; max-width: 760px;
+         margin: 32px auto; padding: 0 16px; line-height: 1.65; font-size: 17px; }
+  h1 { color: var(--accent); margin-bottom: 4px; }
+  .sub { color: var(--muted); margin-top: 0; }
+  h2 { border-bottom: 2px solid var(--line); padding-bottom: 4px; margin-top: 32px; }
+  ol li { margin-bottom: 10px; }
+  .key { display:inline-block; border:1px solid var(--line); border-radius:6px; padding:0 8px; background:#f6f8fa; font-weight:bold; }
+  .row { padding: 6px 10px; border-radius: 6px; margin: 6px 0; }
+  .g { background: var(--green); } .y { background: var(--yellow); }
+  .note { border-right: 4px solid var(--accent); background:#f3f7fb; padding: 10px 14px; margin: 16px 0; }
+  @media print { body { margin: 0 auto; font-size: 14px; } }
+</style>
+</head>
+<body>
+<h1>חשבוניות לחשבשבת</h1>
+<p class="sub">במקום להקליד כל חשבונית מהמייל, המערכת קוראת אותן ומכינה קובץ אחד לקליטה.</p>
+
+<h2>פעם אחת בהתחלה</h2>
+<ol>
+  <li>לחיצה כפולה על <span class="key">0 - התקנה ראשונה</span>.</li>
+  <li>בחלון שנפתח ממלאים: מספר כרטיס מע"מ תשומות, ח.פ של החברה, ואם יש, תיקיית החשבוניות באאוטלוק.</li>
+  <li>מופיעה הודעה שמאשרת שאאוטלוק מחובר. זהו.</li>
+</ol>
+
+<h2>בכל פעם (למשל פעם בשבוע)</h2>
+<ol>
+  <li>אאוטלוק פתוח. לחיצה כפולה על <span class="key">1 - משיכת חשבוניות</span>.</li>
+  <li>נפתחת טבלה באקסל:
+    <div class="row g"><b>שורה ירוקה</b> - הכל מולא ומאושר. לא צריך לעשות כלום.</div>
+    <div class="row y"><b>שורה צהובה</b> - בעמודת "הערות" כתוב מה לבדוק. ממלאים את החסר וכותבים <b>כן</b> בעמודה הראשונה, או <b>לא</b> כדי לדלג עליה לתמיד.</div>
+  </li>
+  <li>שומרים את הטבלה וסוגרים.</li>
+  <li>לחיצה כפולה על <span class="key">2 - יצירת קובץ לחשבשבת</span>.</li>
+  <li>בחשבשבת: <b>כללי &gt; ממשקים &gt; יבוא נתוני הנה"ח &gt; יבוא תנועות הנה"ח</b>, בוחרים "יבוא מטבלת ODBC", ובוחרים את הקובץ החדש. הטבלה נקראת <b>invoices</b>.</li>
+  <li>התנועות נכנסות למנה במאגר הזמני, כמו תמיד. בודקים ומעדכנים.</li>
+</ol>
+
+<div class="note">
+  <b>ספק חדש?</b> בפעם הראשונה ממלאים לו כרטיס ספק וכרטיס הוצאה. מהפעם הבאה הוא מתמלא לבד ויוצא ירוק.
+</div>
+
+<h2>בפעם הראשונה בחשבשבת</h2>
+<p>חשבשבת תבקש להתאים כל עמודה בקובץ לשדה בתוכנה (אסמכתא, תאריך, חשבון חובה וכו'). השמות כמעט זהים. אחרי ההתאמה שומרים אותה בכפתור הדיסקט, ומהפעם הבאה בוחרים אותה מהתיקייה הצהובה. אם חשבשבת לא מוצאת את הקובץ, בוחרים את הקובץ עם הסיומת <b>xls</b> שנוצר לידו.</p>
+
+<h2>מה המערכת לא עושה לבד</h2>
+<ul>
+  <li>לא קולטת לחשבשבת בעצמה. את הלחיצה האחרונה עושים את.</li>
+  <li>חשבונית סרוקה (תמונה בלי טקסט) מסומנת בצהוב ומוקלדת ידנית.</li>
+  <li>חשבונית שהמע"מ בה לא מסתדר עם 18%, או חשבונית שכבר נקלטה, תמיד מסומנת לבדיקה ולא עוברת לבד.</li>
+</ul>
+</body>
+</html>

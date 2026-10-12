@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+.backup/
+demo/home/
+demo/invoices/
+demo/*.pdf
+*.pyc
