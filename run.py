@@ -20,6 +20,14 @@ def _load_main():
     return importlib.import_module("invoices.main")
 
 
+def _install_requirements() -> None:
+    import subprocess
+    exe = Path(sys.executable)
+    python = exe.with_name("python.exe") if exe.name.lower() == "pythonw.exe" else exe
+    subprocess.run([str(python), "-m", "pip", "install", "--user", "-q", "-r", str(ROOT / "requirements.txt")],
+                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=600, check=False)
+
+
 def main() -> None:
     command = sys.argv[1] if len(sys.argv) > 1 else "fetch"
     # setup runs from a .bat that cmd is still reading line by line: never rewrite it mid-run
@@ -27,6 +35,16 @@ def main() -> None:
     updated = None if skip else updater.update()
     try:
         app = _load_main()
+    except ModuleNotFoundError:
+        # an update needs a package she does not have yet: install it, then start
+        _install_requirements()
+        try:
+            app = _load_main()
+        except Exception:
+            if updated and updater.restore():
+                app = _load_main()
+            else:
+                raise
     except Exception:
         if updated and updater.restore():     # the new version is broken: go back and carry on
             app = _load_main()

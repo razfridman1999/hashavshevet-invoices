@@ -115,6 +115,45 @@ def test_release_that_crashes_on_start_is_rolled_back(install, monkeypatch):
     assert "raise RuntimeError" not in (app / "invoices" / "main.py").read_text(encoding="utf-8")
 
 
+def _run_with(app, mod, monkeypatch, install_makes_it_work: bool):
+    main_src = (app / "invoices" / "main.py").read_text(encoding="utf-8")
+    serve(monkeypatch, mod, "2.0",
+          release_zip(app, "2.0", {"invoices/main.py": main_src + "\nimport newpkg_for_test\n"}))
+    ran, installs = [], []
+    run = load_module("run", app / "run.py")
+    real_load = run._load_main
+
+    def load_and_stub():
+        m = real_load()
+        m.run = lambda command: ran.append(command)
+        return m
+
+    def fake_install():
+        installs.append(1)
+        if install_makes_it_work:
+            monkeypatch.setitem(sys.modules, "newpkg_for_test", __import__("types").ModuleType("newpkg_for_test"))
+    monkeypatch.setattr(run, "_load_main", load_and_stub)
+    monkeypatch.setattr(run, "_install_requirements", fake_install)
+    monkeypatch.setattr(sys, "argv", ["run.py", "fetch"])
+    monkeypatch.delenv("INVOICES_NO_UPDATE", raising=False)
+    run.main()
+    return ran, installs
+
+
+def test_update_needing_a_new_package_installs_it(install, monkeypatch):
+    app, mod = install
+    ran, installs = _run_with(app, mod, monkeypatch, install_makes_it_work=True)
+    assert (ran, installs) == (["fetch"], [1])
+    assert (app / "VERSION").read_text().strip() == "2.0"
+
+
+def test_update_whose_package_cannot_install_rolls_back(install, monkeypatch):
+    app, mod = install
+    ran, installs = _run_with(app, mod, monkeypatch, install_makes_it_work=False)
+    assert (ran, installs) == (["fetch"], [1])
+    assert (app / "VERSION").read_text().strip() == "1.0"
+
+
 def test_developer_checkout_is_never_overwritten(install, monkeypatch):
     app, mod = install
     (app / ".git").mkdir()
