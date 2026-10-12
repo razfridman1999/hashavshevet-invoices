@@ -137,6 +137,9 @@
       <label for="f-ledger">כרטסת ספקים</label>
       <div class="field"><input id="f-ledger"><button data-pick="file" data-for="f-ledger">בחירה...</button></div>
       <span class="hint">לא חובה. אם ריק, הכלי לוקח את הקובץ החדש ביותר שבשמו "כרטסת" מתיקיית החשבוניות לקליטה. מולה נבדקות כפילויות, וממנה נלקח סעיף ההוצאה של הספק.</span>
+      <label for="f-scan_reader">קריאת חשבוניות סרוקות</label>
+      <div class="field"><label><input type="checkbox" id="f-scan_reader" style="flex:0"> לקרוא סריקות דרך Claude Code</label></div>
+      <span class="hint">כשמסומן, רק חשבונית סרוקה (תמונה, בלי טקסט) נשלחת ל-Claude לקריאה, ויוצאת מהמחשב. כל השאר נקרא במחשב בלבד. חשבונית סרוקה תמיד מסומנת לבדיקה מול המקור. בלי סימון: סריקות להזנה ידנית.</span>
     </div>
     <datalist id="ol-folders"></datalist>
     <div class="actions"><button class="main" id="settings-save">שמירה</button>
@@ -372,6 +375,7 @@ async function run(action) {
 
 function openSettings() {
   for (const f of FIELDS) $("f-" + f).value = settings[f] || "";
+  $("f-scan_reader").checked = settings.scan_reader === "claude";
   $("settings-msg").textContent = "";
   $("settings").style.display = "block";
   $("settings").scrollIntoView({block: "start"});
@@ -384,6 +388,7 @@ async function settingsClick(b) {
   if (b.id === "settings-save") {
     const data = {};
     for (const f of FIELDS) data[f] = $("f-" + f).value;
+    data.scan_reader = $("f-scan_reader").checked ? "claude" : "";
     b.disabled = true;
     try {
       const r = await api("/api/settings", "POST", data);

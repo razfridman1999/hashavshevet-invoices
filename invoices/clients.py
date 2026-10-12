@@ -63,6 +63,7 @@ def settings(home: Path) -> dict:
     cfg = _cfg(home)
     out = {k: str(cfg.get(k) or "") for k in TEXT_FIELDS}
     out["own_company_ids"] = ", ".join(cfg.get("own_company_ids") or [])
+    out["scan_reader"] = cfg.get("scan_reader") or ""
     return out
 
 
@@ -73,6 +74,8 @@ def save_settings(home: Path, data: dict) -> tuple[bool, str]:
     for k in TEXT_FIELDS:
         if k in data:
             cfg[k] = str(data[k] or "").strip()[:300]
+    if "scan_reader" in data:   # on only by an explicit choice: scans then leave the PC
+        cfg["scan_reader"] = "claude" if data["scan_reader"] in (True, "claude") else ""
     if "own_company_ids" in data:
         cfg["own_company_ids"] = [x for x in re.split(r"[\s,]+", str(data["own_company_ids"] or "")) if x][:5]
     problems = []

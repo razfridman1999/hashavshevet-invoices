@@ -42,6 +42,7 @@ DEFAULT_CONFIG = {
     "files_folder": "",               # a "DD.MM.YY" folder per import, with each invoice as a PDF
     "rep_folder": "",                 # REP\<NN-לקוח>: import files go to "חשבוניות שנקלטו\DD-MM-YYYY"
     "ledger": "",                     # כרטסת ספקים export; empty = newest "*כרטסת*" in files_folder
+    "scan_reader": "",                # "claude" = scans are read by Claude Code (they leave the PC); off by default
 }
 DEAL_NOTE = 'חשבון עסקה: לא נקלט (נקלטת רק חשבונית מס). אם זו בכל זאת חשבונית מס, למחוק "לא" ולכתוב "כן"'
 
@@ -193,6 +194,7 @@ def fetch() -> Path | None:
             ids[sources.tag_of(f.mail_id)] = f.entry_id
     if ids:
         save(STATE, state)
+    invs, scan_line = _read_invoices([f for f in fetched if f.mail_id not in done and f.mail_id not in previous], cfg)
     rows, batch_keys = [], set()
     for f in fetched:
         if f.mail_id in done:
@@ -202,11 +204,7 @@ def fetch() -> Path | None:
             rows.append(r)
             batch_keys.add(f'{r["supplier_id"]}:{r["invoice_number"]}')
             continue
-        try:
-            inv = extract(f.pdf, set(cfg["own_company_ids"]))
-        except Exception:  # one broken attachment must not block all the others
-            inv = Invoice(source=str(f.pdf), has_text=False)
-            inv.warnings.append("לא הצלחתי לפתוח את הקובץ (פגום או מוגן בסיסמה): הזנה ידנית")
+        inv = invs[f.mail_id]
         if f.note:
             inv.warnings.append(f.note)
         if inv.invoice_date and abs((inv.invoice_date - f.received.date()).days) > 120:
@@ -231,6 +229,12 @@ def fetch() -> Path | None:
         notes = review_notes(inv, sup, seen_keys, batch_keys, cfg, f.sender) + ledger_notes
         if index_note:
             notes.append(index_note)
+        # her rule: the "סעיף" stamped or written on the invoice comes first, then the history
+        expense = (sup or {}).get("expense_account", "")
+        if inv.section:
+            if expense and inv.section != expense:
+                notes.append(f"סעיף בחותמת ({inv.section}) שונה מהכרטיס הרגיל של הספק ({expense}): לבדוק")
+            expense = inv.section
         batch_keys.add(key)
         name = (sup or {}).get("name") or inv.supplier_name
         rows.append({
@@ -238,7 +242,7 @@ def fetch() -> Path | None:
             "supplier_name": name,
             "supplier_id": inv.supplier_id,
             "supplier_account": (sup or {}).get("supplier_account", ""),
-            "expense_account": (sup or {}).get("expense_account", ""),
+            "expense_account": expense,
             "invoice_number": inv.invoice_number,
             "invoice_date": inv.invoice_date,
             "net": float(inv.net) if inv.net is not None else None,
@@ -269,11 +273,56 @@ def fetch() -> Path | None:
     logged = _log([(r, *journal.status_after_fetch(r)) for r in rows])
     ui.message(f"נמצאו {len(rows)} חשבוניות: {ready} מוכנות, {len(rows) - ready} לבדיקה.\n\nהטבלה תיפתח עכשיו."
                + (f"\n\n{in_ledger} מהן כבר רשומות בכרטסת: הן לא ייכנסו שוב." if in_ledger else "")
-               + ledger_line + logged)
+               + scan_line + ledger_line + logged)
     return out
 
 
-LEDGER_DUP = "כפילות: החשבונית כבר רשומה בכרטסת (אותו ספק, מספר וסכום)"
+SCAN_CACHE = "scan_cache.json"
+
+
+def _read_invoices(fetched: list, cfg: dict) -> tuple[dict, str]:
+    """Every new file read: text PDFs here on the PC; scans by Claude Code only when she
+    turned that on for this client. A scan already read is never sent again: its answer
+    is kept by the file's fingerprint."""
+    own = set(cfg["own_company_ids"])
+    invs, broken = {}, set()
+    for f in fetched:
+        try:
+            invs[f.mail_id] = extract(f.pdf, own)
+        except Exception:  # one broken attachment must not block all the others
+            inv = Invoice(source=str(f.pdf), has_text=False)
+            inv.warnings.append("לא הצלחתי לפתוח את הקובץ (פגום או מוגן בסיסמה): הזנה ידנית")
+            invs[f.mail_id] = inv
+            broken.add(f.mail_id)
+    scans = [f for f in fetched if not invs[f.mail_id].has_text and f.mail_id not in broken]
+    if not scans or cfg.get("scan_reader") != "claude":
+        return invs, ""
+    from . import scan
+    if not scan.claude_path():
+        return invs, f"\n\n{len(scans)} סריקות לא נקראו: Claude Code לא נמצא במחשב. הן נשארו להזנה ידנית."
+    cache_path = HOME / SCAN_CACHE
+    cache = load(cache_path, {})
+    todo = [f for f in scans if sources.file_hash(f.pdf) not in cache]
+    if todo:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            for f, data in zip(todo, pool.map(lambda f: scan.read_data(f.pdf, own), todo)):
+                if data:
+                    cache[sources.file_hash(f.pdf)] = data
+        save(cache_path, cache)
+    failed = 0
+    for f in scans:
+        data = cache.get(sources.file_hash(f.pdf))
+        if data:
+            invs[f.mail_id] = scan.to_invoice(data, str(f.pdf), own)
+        else:
+            invs[f.mail_id].warnings.append(scan.FAILED)
+            failed += 1
+    return invs, (f"\n\nנקראו {len(scans) - failed} סריקות דרך Claude Code"
+                  + (f", {failed} לא נקראו ונשארו להזנה ידנית" if failed else "") + ".")
+
+
+LEDGER_DUP ="כפילות: החשבונית כבר רשומה בכרטסת (אותו ספק, מספר וסכום)"
 
 
 def _ledger(cfg: dict):
