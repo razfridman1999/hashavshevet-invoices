@@ -84,7 +84,10 @@ def review_notes(inv: Invoice, supplier: dict | None, entered: set[str], in_batc
     if not supplier:
         notes.append("ספק חדש: למלא כרטיס ספק וכרטיס הוצאה (פעם אחת, מכאן זה אוטומטי)")
     elif supplier.get("from_index") and supplier.get("from_ledger"):
-        pass        # both cards come from Hashavshevet itself: one card by ח.פ, one expense card in its history
+        # Both cards come from Hashavshevet, but the tool has never seen this supplier's mail:
+        # anyone can send a PDF carrying a real supplier's ח.פ. One approval by her, and the
+        # sender is learned like any other.
+        notes.append("ספק ראשון בכלי: הכרטיסים מולאו מחשבשבת (אינדקס וכרטסת), לאשר פעם אחת")
     elif supplier.get("from_index"):
         notes.append("ספק ראשון בכלי: כרטיס הספק מולא מהאינדקס, למלא כרטיס הוצאה ולבדוק את הפרטים")
     elif sender and sender.lower() not in supplier.get("senders", []):

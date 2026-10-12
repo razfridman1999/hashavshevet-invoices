@@ -116,8 +116,11 @@ def test_new_supplier_gets_its_expense_card_from_the_ledger(home):
     rows = review_rows(main.fetch())
     first = next(r for r in rows if r["מס' חשבונית"] == "20261045")
     assert (first["כרטיס ספק"], first["כרטיס הוצאה"]) == ("40010", "81100")
-    # both cards come from Hashavshevet itself and the amounts add up: green, nothing to do
-    assert not first["הערות"] and first["לאשר? (כן/לא)"] == "כן"
+    # both cards come from Hashavshevet, but its mail was never seen: anyone can send a PDF
+    # with a real supplier's ח.פ, so the first one is never pre-approved
+    assert first["לאשר? (כן/לא)"] != "כן"
+    assert journal.issue_codes({"notes": first["הערות"]}) == ["from_index"]
+    assert "לאשר פעם אחת" in first["הערות"]
 
 
 def test_new_supplier_from_the_index_alone_still_waits_for_her(home):

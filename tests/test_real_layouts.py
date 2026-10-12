@@ -105,3 +105,12 @@ def test_the_vat_file_line_is_not_the_vat_amount():
     inv = read(f'ספק לדוגמה בע"מ\nח.פ {SUP}\nחשבונית מס 95\nתאריך: 05/10/2026\n'
                "מס' תיק במע\"מ 942\nסה\"כ לתשלום: 118.00\nמע\"מ 18%: 18.00")
     assert inv.vat == D("18.00") and not inv.warnings
+
+
+def test_a_page_full_of_figures_is_read_quickly():
+    """The pair search is n squared: a crafted PDF with thousands of amounts must not hang her fetch."""
+    import time
+    figures = "\n".join(f"{i}.{i % 100:02d}" for i in range(1, 6000))
+    start = time.monotonic()
+    read(f'ספק לדוגמה בע"מ\nח.פ {SUP}\nחשבונית מס 95\nתאריך: 05/10/2026\n{figures}')   # no total: the pair search
+    assert time.monotonic() - start < 3

@@ -153,6 +153,9 @@ def _amount_after(text: str, label: str, skip_before: re.Pattern | None = None) 
     return None
 
 
+MAX_AMOUNTS = 200   # bounds the pair search (n squared) on a crafted or huge PDF
+
+
 def _consistent(net: Decimal, vat: Decimal, rate: Decimal) -> bool:
     tolerance = max(Decimal("0.05"), abs(net + vat) * Decimal("0.0005"))
     return net > 0 and vat > 0 and abs((net * rate).quantize(Decimal("0.01")) - vat) <= tolerance
@@ -172,6 +175,8 @@ def reconcile(text: str, total: Decimal | None, vat: Decimal | None, rate: Decim
     amounts = {_num(m.group(0)) for m in MONEY_TOKEN.finditer(text)          # never a rate: "18.00%", "%18.00"
                if not text[m.end(): m.end() + 2].lstrip(" \t").startswith("%")       # same line only
                and not text[max(0, m.start() - 2): m.start()].rstrip(" \t").endswith("%")} - {None}
+    if len(amounts) > MAX_AMOUNTS:   # a page of hundreds of figures is a statement, not one invoice
+        return total, vat
     if total is not None and total > 0:
         fits = sorted(v for v in amounts if v < total and (total - v) in amounts and _consistent(total - v, v, rate))
         if len(fits) == 1:
