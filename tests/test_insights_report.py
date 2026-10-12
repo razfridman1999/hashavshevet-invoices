@@ -96,7 +96,8 @@ def test_every_note_the_tool_writes_has_a_code():
     """A new kind of note would show up as 'other' and tell Raz nothing."""
     src = "".join((ROOT / "invoices" / f).read_text(encoding="utf-8") for f in ("extract.py", "main.py"))
     texts = re.findall(r'(?:warnings|notes)\.(?:append|insert)\((?:0, )?f?([\'"])(.+?)\1', src)
-    texts = [re.sub(r"\{[^}]*\}", "20.00", t) for _, t in texts] + [main.DEAL_NOTE, split.UNCLEAR, main.LEDGER_DUP, scan.NOTE, scan.FAILED]
+    texts = [re.sub(r"\{[^}]*\}", "20.00", t) for _, t in texts] + [main.DEAL_NOTE, split.UNCLEAR, main.LEDGER_DUP, scan.NOTE, scan.FAILED,
+                                                                     "לא בטוח בקריאה של: סעיף. להשוות לחשבונית"]
     assert len(texts) > 20
     for t in texts:
         assert journal.issue_codes({"notes": t}) != ["other"], t

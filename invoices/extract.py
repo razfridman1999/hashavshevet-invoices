@@ -74,6 +74,7 @@ class Invoice:
     has_text: bool = True
     deal_only: bool = False          # "חשבון עסקה" without a tax invoice: skipped, not entered
     section: str = ""                # "סעיף" stamped or handwritten on a scan: the expense card
+    splits: list = field(default_factory=list)   # [(card, net)] when the stamp splits it over cards
     warnings: list[str] = field(default_factory=list)
 
     @property

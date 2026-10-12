@@ -16,7 +16,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from . import journal, ledger, sources, split, supplier_index, ui, wpr
+from . import journal, ledger, sections, sources, split, supplier_index, ui, wpr
 from .extract import Invoice, extract
 from .workbook import description_of, details_text, read_review, save_xls_copy, write_import, write_review
 
@@ -231,7 +231,11 @@ def fetch() -> Path | None:
             notes.append(index_note)
         # her rule: the "סעיף" stamped or written on the invoice comes first, then the history
         expense = (sup or {}).get("expense_account", "")
-        if inv.section:
+        split = sections.format_split(inv.splits) if len(inv.splits) > 1 else ""
+        if split:
+            notes.append(f"חשבונית מפוצלת ל-{len(inv.splits)} סעיפים לפי החותמת ({split}): לבדוק")
+            expense = max(inv.splits, key=lambda p: abs(p[1]))[0]
+        elif inv.section:
             if expense and inv.section != expense:
                 notes.append(f"סעיף בחותמת ({inv.section}) שונה מהכרטיס הרגיל של הספק ({expense}): לבדוק")
             expense = inv.section
@@ -254,6 +258,7 @@ def fetch() -> Path | None:
             "notes": " | ".join(notes),
             "file": str(f.pdf),
             "original": f.original,
+            "split": split,
             "key": f.mail_id,
             "sender": f.sender.lower(),
         })
@@ -384,6 +389,9 @@ def export(review_path: Path | None = None) -> Path | None:
         if bad := _balance_problem(r):
             held_rows.append((r, f"{label}: {bad}"))
             continue
+        if bad := sections.parts(r)[1]:
+            held_rows.append((r, f"{label}: {bad}"))
+            continue
         if r["invoice_number"] and (key in entered or key in approved_keys):
             held_rows.append((r, f"{label}: כבר נקלטה או מופיעה פעמיים - לא נכנסה שוב"))
             continue
@@ -431,7 +439,8 @@ def export(review_path: Path | None = None) -> Path | None:
     out_dir = rep_dir or date_dir or HOME
     # short name: the mapping file holds the full path twice and has room for 255 bytes
     out = out_dir / (f"{now:%H%M%S}.xlsx" if out_dir != HOME else f"לקליטה בחשבשבת {now:%Y-%m-%d %H%M%S}.xlsx")
-    write_import(approved, cfg["vat_account"], out, cfg["ttype"], f"jurnal{hid}" if hid else "invoices")
+    lines = [part for r in approved for part in sections.parts(r)[0]]   # one line per expense card
+    write_import(lines, cfg["vat_account"], out, cfg["ttype"], f"jurnal{hid}" if hid else "invoices")
     xls = save_xls_copy(out)
     # state right after the file exists: if anything later fails, a rerun must not
     # export these rows a second time

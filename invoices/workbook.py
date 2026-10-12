@@ -37,6 +37,7 @@ REVIEW_COLS = [
     ("key", "מזהה"),
     ("sender", "נשלח מ"),
     ("original", "קובץ מקור"),     # the whole PDF, when this invoice was cut out of it
+    ("split", "פיצול לסעיפים"),     # "8110=1000; 8120=4000": one journal line per expense card
 ]
 COL = {k: i for i, (k, _) in enumerate(REVIEW_COLS)}
 
@@ -97,8 +98,8 @@ def write_review(rows: list[dict], path: Path) -> None:
         fill = YELLOW if r.get("notes") else GREEN
         for cell in ws[ws.max_row]:
             cell.fill = fill
-    widths = [12, 26, 13, 12, 12, 14, 12, 12, 10, 12, 14, 40, 45, 30, 8, 28, 30]
-    for col, w in zip("ABCDEFGHIJKLMNOPQ", widths):
+    widths = [12, 26, 13, 12, 12, 14, 12, 12, 10, 12, 14, 40, 45, 30, 8, 28, 30, 26]
+    for col, w in zip("ABCDEFGHIJKLMNOPQR", widths):
         ws.column_dimensions[col].width = w
     for row in ws.iter_rows(min_row=2):
         row[COL["invoice_date"]].number_format = "DD/MM/YYYY"
@@ -123,7 +124,7 @@ def read_review(path: Path) -> list[dict]:
             continue
         row = {k: None for k, _ in REVIEW_COLS} | dict(zip(keys, values))
         for k in ("supplier_id", "supplier_account", "expense_account", "invoice_number",
-                  "allocation_number", "supplier_name", "key", "sender", "details"):
+                  "allocation_number", "supplier_name", "key", "sender", "details", "split"):
             v = row.get(k)
             # Excel turns typed account numbers into floats (40012 -> 40012.0)
             row[k] = "" if v is None else (str(int(v)) if isinstance(v, float) and v.is_integer() else str(v).strip())
