@@ -83,8 +83,8 @@ def review_notes(inv: Invoice, supplier: dict | None, entered: set[str], in_batc
         notes.insert(0, DEAL_NOTE)
     if not supplier:
         notes.append("ספק חדש: למלא כרטיס ספק וכרטיס הוצאה (פעם אחת, מכאן זה אוטומטי)")
-    elif supplier.get("from_index") and supplier.get("expense_account"):
-        notes.append("ספק ראשון בכלי: כרטיס הספק מהאינדקס וכרטיס ההוצאה מהכרטסת, לבדוק את הפרטים")
+    elif supplier.get("from_index") and supplier.get("from_ledger"):
+        pass        # both cards come from Hashavshevet itself: one card by ח.פ, one expense card in its history
     elif supplier.get("from_index"):
         notes.append("ספק ראשון בכלי: כרטיס הספק מולא מהאינדקס, למלא כרטיס הוצאה ולבדוק את הפרטים")
     elif sender and sender.lower() not in supplier.get("senders", []):
@@ -217,11 +217,13 @@ def fetch() -> Path | None:
             if not sup.get("expense_account"):      # her rule: the card this supplier's invoices went to
                 cards = led.expense_accounts(sup["supplier_account"])
                 if len(cards) == 1:
-                    sup = {**sup, "expense_account": cards[0]}
+                    sup = {**sup, "expense_account": cards[0], "from_ledger": True}
                 elif cards:
                     ledger_notes.append(f"לספק יש כמה סעיפי הוצאה בכרטסת ({', '.join(cards[:4])}): לבחור כרטיס הוצאה")
             if led.has(sup["supplier_account"], inv.invoice_number, inv.total):
                 ledger_notes.append(LEDGER_DUP)
+            elif inv.invoice_number and (other := led.same_number(sup["supplier_account"], inv.invoice_number)):
+                ledger_notes.append(f"ייתכן שכבר נקלטה: בכרטסת יש לספק הזה את אותו מספר עם סכום אחר ({other[0]}). לבדוק")
         key = f"{inv.supplier_id}:{inv.invoice_number}"
         notes = review_notes(inv, sup, seen_keys, batch_keys, cfg, f.sender) + ledger_notes
         if index_note:

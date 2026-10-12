@@ -116,7 +116,30 @@ def test_new_supplier_gets_its_expense_card_from_the_ledger(home):
     rows = review_rows(main.fetch())
     first = next(r for r in rows if r["מס' חשבונית"] == "20261045")
     assert (first["כרטיס ספק"], first["כרטיס הוצאה"]) == ("40010", "81100")
-    assert "מהכרטסת" in first["הערות"]
+    # both cards come from Hashavshevet itself and the amounts add up: green, nothing to do
+    assert not first["הערות"] and first["לאשר? (כן/לא)"] == "כן"
+
+
+def test_new_supplier_from_the_index_alone_still_waits_for_her(home):
+    with_index_and_ledger(home, {"99999": [line("81100", "0", "77", "100.00")]})   # no history for 40010
+    first = next(r for r in review_rows(main.fetch()) if r["מס' חשבונית"] == "20261045")
+    assert "from_index" in journal.issue_codes({"notes": first["הערות"]})
+
+
+def test_a_bank_is_never_an_expense_card(tmp_path):
+    """A refund puts the bank on the credit side; it pays two suppliers, so it is a bank."""
+    led = ledger.load(write_ledger(tmp_path / "k.xlsx", {
+        "1": [line("9302", "0", "11", "50.00"), line("1100", "0", "12", "20.00"),
+              line("1100", "555", None, "70.00", credit=False)],
+        "2": [line("9401", "0", "21", "10.00"), line("1100", "556", None, "10.00", credit=False)]}))
+    assert led.expense_accounts("1") == ["9302"]
+
+
+def test_same_number_with_another_amount_is_flagged(home):
+    with_index_and_ledger(home, {"40010": [line("81100", "0", "20261045", "400.00")]})
+    first = next(r for r in review_rows(main.fetch()) if r["מס' חשבונית"] == "20261045")
+    assert "ledger_amount" in journal.issue_codes({"notes": first["הערות"]})
+    assert "duplicate" not in journal.issue_codes({"notes": first["הערות"]})
 
 
 def test_several_expense_cards_means_she_chooses(home):

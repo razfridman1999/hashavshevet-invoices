@@ -42,6 +42,7 @@ NOTE_CODES = [
     ("שולח לא מוכר", "unknown_sender"), ("כפילות", "duplicate"), ("סכום גבוה", "large"),
     ("סכום שלילי", "negative"), ("לח.פ הזה יש כמה", "index_many"), ("תאריך החשבונית רחוק", "date_far"),
     ("ייתכן שבקובץ יש כמה חשבוניות", "multi_unclear"), ("לספק יש כמה סעיפי הוצאה", "ledger_many"),
+    ("לא נראה כמו חשבונית", "not_invoice"), ("ייתכן שכבר נקלטה", "ledger_amount"),
 ]
 
 

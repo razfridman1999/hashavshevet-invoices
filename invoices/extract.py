@@ -18,7 +18,8 @@ import fitz  # PyMuPDF
 VAT_RATES = [(date(2025, 1, 1), Decimal("0.18")), (date(2015, 10, 1), Decimal("0.17"))]
 
 ID_LABELS = r'(?:ח\.?\s?פ\.?|ח"פ|ע\.?\s?מ\.?|ע"מ|עוסק\s+(?:מורשה|פטור)|מס[\'׳]?\s*עוסק|מספר\s+עוסק|ח\.צ|ע\.ר|VAT\s*(?:No|ID)?|Reg\.?\s*No)'
-DATE_RE = re.compile(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{4}|\d{2})\b")
+# digits-only boundaries: a Hebrew letter glued to a date ("חשבון28/09/26") is no \b
+DATE_RE = re.compile(r"(?<![\d./-])(\d{1,2})[./-](\d{1,2})[./-](\d{4}|\d{2})(?![\d./-])")
 # 1,234.56 | 1234.56 | 1234 - never a percentage ("18%", "18.00%") or part of a longer
 # number. A minus counts when it touches the digits, sits alone at the end of the line
 # before them (RTL layouts split it off), or trails them ("200.00-"). A hyphen used as a
@@ -30,26 +31,34 @@ TOTAL_STRONG = (r'סה"?כ\s*(?:לתשלום|כולל\s*מע"?מ)|סך\s*הכל\
 VAT_LABEL = r'מע"?מ|מס\s+ערך\s+מוסף|\bVAT\b(?!\s*(?:No|ID|Reg|#))'
 CREDIT_TITLE = r"(?:הודעת[ \t-]+זיכוי|תעודת[ \t]+זיכוי|חשבונית(?:[ \t]+מס)?[ \t]*/?[ \t]*זיכוי|Credit[ \t]+Note)"
 # date labels: which date on the page is the invoice's own
-DATE_PREFER = re.compile(r"חשבונית|הפקה|ההפקה|המסמך|מסמך|הוצאה|Invoice", re.I)
+DATE_PREFER = re.compile(r"חשבונית|הפקה|ההפקה|המסמך|מסמך|הוצאה|עריכת|הנפקה|Invoice", re.I)
 DATE_EXCLUDE = re.compile(r"פירעון|תשלום|אספקה|הזמנה|הדפסה|ערך|לידה|תפוגה|Due|Order|Print|Delivery", re.I)
 MONEY_TOKEN = re.compile(r"(?<![\d.,])(?:[1-9]\d{0,2}(?:,\d{3})+|[1-9]\d*|0)\.\d{2}(?![\d.])")
 # PDFs are full of no-break spaces and invisible direction marks between words
 SPACES = str.maketrans({"\xa0": " ", " ": " ", " ": " ", "‏": None, "‎": None,
                         "‪": None, "‫": None, "‬": None, "‭": None, "‮": None,
                         "⁦": None, "⁧": None, "⁨": None, "⁩": None, "״": '"'})
-# words that turn "מע"מ" into a different line: "לפני מע"מ", "כולל מע"מ", "ללא מע"מ"
-NOT_VAT_LINE = re.compile(r'(?:לפני|כולל|ללא|פטור\s+מ|חייב\s*ב?|נגבה|[Ss]ub\s*[Tt]otal\s*(?:excl\.?|before)?)\s*$')
+# words that turn "מע"מ" into a different line: "לפני מע"מ", "כולל מע"מ", "ללא מע"מ", and the
+# buyer's or seller's VAT file number: "מספר מע"מ", "מס' תיק במע"מ"
+NOT_VAT_LINE = re.compile(r'(?:לפני|כולל|ללא|פטור\s+מ|חייב\s*ב?|חייבים\s*ב?|נגבה|תיק\s*ב?|מספר|מס[\'׳]?'
+                          r'|[Ss]ub\s*[Tt]otal\s*(?:excl\.?|before)?)\s*$')
 # a document title, then optional qualifiers, then the number - all on one line,
 # so a title never borrows a number (a date, an amount) from the line below it
 DOC_TITLE = (r"(?:" + CREDIT_TITLE + r"|חשבונית(?:[ \t]+מס)?(?:[ \t]*/[ \t]*קבלה)?(?:[ \t]+(?:מקור|העתק|זיכוי|עסקה|נאמן[ \t]+למקור))?"
              r"|חשבון[ \t]+עסקה|קבלה|Tax[ \t]+Invoice|Invoice)")
 # the number may carry a prefix: letters ("INV-123") or a short series ("3-1901938", "01/004687")
+# (up to 20 digits: big suppliers print long numbers; the אסמכתא keeps the last 9)
 NUMBER_RE = re.compile(DOC_TITLE + r"[ \t]*(?:מס[\'׳]?|מספר|No\.?|#)?[ \t]*[:#]?[ \t]*"
-                       r"((?:[A-Za-z]{1,3}-?|\d{1,3}[-/])?\d{2,12})(?![\d/.])")
+                       r"((?:[A-Za-z]{1,3}-?|\d{1,3}[-/])?\d{2,20})(?![\d/.])")
 # "חשבון עסקה" is a payment request, not a tax invoice: it is never entered
 DEAL_ONLY = re.compile(r"חשבון[ \t]+עסקה")
 TAX_INVOICE = re.compile(r"חשבונית[ \t]+מס|Tax[ \t]+Invoice", re.I)
-NUMBER_BEFORE_RE = re.compile(r"(?<![\d/.])(\d{2,12})[ \t:]*" + DOC_TITLE)   # RTL visual order
+NUMBER_BEFORE_RE = re.compile(r"(?<![\d/.])(\d{2,20})[ \t:]*" + DOC_TITLE)   # RTL visual order
+# "מספר חשבונית: 123" and, in visual order, "123מספר חשבונית"
+NUMBER_LABEL = r"(?:מספר|מס[\'׳])[ \t]*חשבונית"
+NUMBER_LABEL_RE = re.compile(NUMBER_LABEL + r"[ \t:#]*(\d{2,20})(?![\d/.])|(?<![\d/.])(\d{2,20})[ \t:]*" + NUMBER_LABEL)
+ALLOC_RE = re.compile(r"(?:מספר|מס[\'׳]?)\s*הקצאה[\s:]*(\d{9,})|(?<!\d)(\d{9,})[ \t:]*(?:מספר|מס[\'׳]?)\s*הקצאה")
+TOTAL_WEAK = r'סה"?כ\s*חיוב|ריכוז\s*החיובים|סה"?כ|סך\s*הכל'
 
 
 @dataclass
@@ -64,6 +73,7 @@ class Invoice:
     allocation_number: str = ""      # מספר הקצאה (חשבונית ישראל)
     has_text: bool = True
     deal_only: bool = False          # "חשבון עסקה" without a tax invoice: skipped, not entered
+    section: str = ""                # "סעיף" stamped or handwritten on a scan: the expense card
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -115,6 +125,12 @@ def _parse_date(m: re.Match) -> date | None:
         return None
 
 
+def _plausible(m: re.Match) -> bool:
+    """A bare run of 7+ digits (no comma, no decimals) is an ID or a reference number - a
+    company's VAT file, a customer number - never an amount on an invoice."""
+    return "," in m.group(2) or "." in m.group(2) or len(m.group(2)) < 7
+
+
 def _amount_after(text: str, label: str, skip_before: re.Pattern | None = None) -> Decimal | None:
     """Amount on the same line as a label, or on the next line (PDF layouts split them)."""
     for m in re.finditer(label, text):
@@ -125,16 +141,48 @@ def _amount_after(text: str, label: str, skip_before: re.Pattern | None = None) 
         line_end = len(text) if line_end == -1 else line_end
         # 1. same line, after the label  2. same line, before it (RTL visual order)
         # 3. the next few lines (layouts that split "label" / ":" / "amount")
-        a = re.search(AMOUNT_RE, text[m.end(): line_end])
+        a = [x for x in re.finditer(AMOUNT_RE, text[m.end(): line_end]) if _plausible(x)]
         if a:
-            return _signed(a)
-        b = list(re.finditer(AMOUNT_RE, text[line_start: m.start()]))
+            return _signed(a[0])
+        b = [x for x in re.finditer(AMOUNT_RE, text[line_start: m.start()]) if _plausible(x)]
         if b:
             return _signed(b[-1])
-        c = re.search(AMOUNT_RE, text[line_end: line_end + 40])
+        c = [x for x in re.finditer(AMOUNT_RE, text[line_end: line_end + 40]) if _plausible(x)]
         if c:
-            return _signed(c)
+            return _signed(c[0])
     return None
+
+
+def _consistent(net: Decimal, vat: Decimal, rate: Decimal) -> bool:
+    tolerance = max(Decimal("0.05"), abs(net + vat) * Decimal("0.0005"))
+    return net > 0 and vat > 0 and abs((net * rate).quantize(Decimal("0.01")) - vat) <= tolerance
+
+
+def reconcile(text: str, total: Decimal | None, vat: Decimal | None, rate: Decimal):
+    """(total, vat) that add up, found among the amounts printed on the page.
+
+    Tables split labels from their numbers, so "the number after the label" is often the
+    VAT rate (18.00) or the total. When the labelled pair does not add up, look for an
+    amount V on the page such that "total - V" is also printed on the page and V is the
+    VAT on it. Both sides must be printed: an amount that merely happens to fit is never
+    taken. With no labelled total, look for a printed net + VAT = printed total.
+    Returns the labelled values unchanged when nothing on the page fits."""
+    if total is not None and vat is not None and _consistent(total - vat, vat, rate):
+        return total, vat
+    amounts = {_num(m.group(0)) for m in MONEY_TOKEN.finditer(text)          # never a rate: "18.00%", "%18.00"
+               if not text[m.end(): m.end() + 2].lstrip(" \t").startswith("%")       # same line only
+               and not text[max(0, m.start() - 2): m.start()].rstrip(" \t").endswith("%")} - {None}
+    if total is not None and total > 0:
+        fits = sorted(v for v in amounts if v < total and (total - v) in amounts and _consistent(total - v, v, rate))
+        if len(fits) == 1:
+            return total, fits[0]
+        return total, vat
+    if total is None:
+        triples = {(n + v, v) for n in amounts for v in amounts
+                   if v < n and (n + v) in amounts and _consistent(n, v, rate)}
+        if len(triples) == 1:
+            return triples.pop()
+    return total, vat
 
 
 def _signed(m: re.Match) -> Decimal | None:
@@ -253,13 +301,13 @@ def _extract_text(text: str, source: str, own_ids: set[str]) -> Invoice:
     else:
         inv.warnings.append("לא נמצא ח.פ / ע.מ של הספק")
 
-    alloc = re.search(r"(?:מספר|מס[\'׳]?)\s*הקצאה[\s:]*(\d{9,})", text)
+    alloc = ALLOC_RE.search(text)
     if alloc:
-        inv.allocation_number = alloc.group(1)
+        inv.allocation_number = alloc.group(1) or alloc.group(2)
 
-    num = NUMBER_RE.search(text) or NUMBER_BEFORE_RE.search(text)
+    num = NUMBER_RE.search(text) or NUMBER_LABEL_RE.search(text) or NUMBER_BEFORE_RE.search(text)
     if num:
-        inv.invoice_number = num.group(1)
+        inv.invoice_number = next(g for g in num.groups() if g)
     else:
         inv.warnings.append("לא נמצא מספר חשבונית")
 
@@ -269,14 +317,17 @@ def _extract_text(text: str, source: str, own_ids: set[str]) -> Invoice:
     elif not sure:
         inv.warnings.append("יש כמה תאריכים במסמך: לוודא שזה תאריך החשבונית")
 
-    inv.total = _amount_after(text, TOTAL_STRONG)
-    if inv.total is None:
-        inv.total = _amount_after(text, r'סה"?כ|סך\s*הכל')
+    total = _amount_after(text, TOTAL_STRONG)
+    if total is None:
+        total = _amount_after(text, TOTAL_WEAK)
+    vat = _amount_after(text, VAT_LABEL, skip_before=NOT_VAT_LINE)
+    exempt = bool(re.search(r"עוסק\s+פטור", text))
+    if not exempt:
+        total, vat = reconcile(text, total, vat, vat_rate_on(inv.invoice_date))
+    inv.total = total
     if inv.total is None:
         inv.warnings.append("לא נמצא סכום כולל")
-
-    vat = _amount_after(text, VAT_LABEL, skip_before=NOT_VAT_LINE)
-    if re.search(r"עוסק\s+פטור", text):
+    if exempt:
         # an exempt dealer charges no VAT; a VAT amount on the same page is a contradiction
         if vat:
             inv.warnings.append('כתוב "עוסק פטור" אבל מופיע סכום מע"מ: לבדוק')
@@ -297,8 +348,11 @@ def _extract_text(text: str, source: str, own_ids: set[str]) -> Invoice:
     elif "זיכוי" in text and inv.total is not None and inv.total > 0:
         inv.warnings.append('המילה "זיכוי" מופיעה במסמך: לוודא שזו לא חשבונית זיכוי')
 
-    inv.supplier_name = _supplier_name(text.splitlines(), inv.supplier_id)
+    # no ח.פ: no guessing a name from some random line ("מקור", a date, a heading)
+    inv.supplier_name = _supplier_name(text.splitlines(), inv.supplier_id) if inv.supplier_id else ""
     inv.deal_only = bool(DEAL_ONLY.search(text)) and not TAX_INVOICE.search(text)
+    if not re.search(DOC_TITLE, text) and not inv.invoice_number and inv.total is None:
+        inv.warnings.insert(0, 'לא נראה כמו חשבונית (אין כותרת, מספר או סכום): לבדוק, או לסמן "לא"')
     check_amounts(inv)
     return inv
 

@@ -43,9 +43,27 @@ class Ledger:
             return False
         return any(ref in ln.refs and ln.amount == abs(amount) for ln in self.lines.get(str(account), []))
 
+    def same_number(self, account: str, invoice_number: str) -> list[Decimal]:
+        """Amounts entered for this supplier under this invoice number."""
+        ref = journal_reference(invoice_number or "")
+        return [ln.amount for ln in self.lines.get(str(account), []) if ref and ref in ln.refs]
+
+    def banks(self) -> set[str]:
+        """Counter accounts that pay suppliers: on the debit side for two suppliers or more.
+        A refund or a reversed standing order puts a bank on the credit side too, and a
+        bank is never an expense card."""
+        paid: dict[str, set[str]] = {}
+        for acc, lines in self.lines.items():
+            for ln in lines:
+                if not ln.credit and ln.counter:
+                    paid.setdefault(ln.counter, set()).add(acc)
+        return {c for c, accs in paid.items() if len(accs) >= 2}
+
     def expense_accounts(self, account: str) -> list[str]:
         """The expense cards this supplier's invoices went to, most used first."""
-        used = Counter(ln.counter for ln in self.lines.get(str(account), []) if ln.credit and ln.counter)
+        banks = self.banks()
+        used = Counter(ln.counter for ln in self.lines.get(str(account), [])
+                       if ln.credit and ln.counter and ln.counter not in banks)
         return [card for card, _ in used.most_common()]
 
 
