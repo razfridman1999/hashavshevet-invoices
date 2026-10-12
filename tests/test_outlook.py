@@ -120,6 +120,21 @@ def test_old_mail_is_skipped_without_a_locale_dependent_filter(tmp_path, monkeyp
     assert Items.restricted_with is None
 
 
+def test_known_supplier_from_a_new_address_is_held(tmp_path, monkeypatch):
+    """Security review: a PDF carrying a known supplier's ח.פ, sent from an address that
+    supplier never used, must not come out pre-approved."""
+    from invoices import main
+    from invoices.extract import Invoice
+    sup = {"name": "חשמל", "supplier_account": "1", "expense_account": "2",
+           "senders": ["billing@electric.example"]}
+    inv = Invoice(source="x", supplier_id="513100008", invoice_number="9", total=None)
+    cfg = {"large_amount": 5000}
+    assert main.review_notes(inv, sup, set(), set(), cfg, "billing@electric.example") == []
+    assert main.review_notes(inv, sup, set(), set(), cfg, "BILLING@electric.example") == []
+    assert any("שולח לא מוכר" in n for n in
+               main.review_notes(inv, sup, set(), set(), cfg, "billing@e1ectric.example"))
+
+
 def test_subfolder(tmp_path, monkeypatch):
     inbox = Folder([], sub={"חשבוניות": Folder([Mail(8, "חשבונית", ["a.pdf"])])})
     install_fake_outlook(monkeypatch, inbox)

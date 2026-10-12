@@ -45,11 +45,15 @@ def save(path: Path, data) -> None:
 
 
 def review_notes(inv: Invoice, supplier: dict | None, entered: set[str], in_batch: set[str],
-                 cfg: dict) -> list[str]:
+                 cfg: dict, sender: str = "") -> list[str]:
     """Why this invoice needs a human look. An empty list means the row is ready (green)."""
     notes = list(inv.warnings)
     if not supplier:
         notes.append("ספק חדש: למלא כרטיס ספק וכרטיס הוצאה (פעם אחת, מכאן זה אוטומטי)")
+    elif sender and sender.lower() not in supplier.get("senders", []):
+        # Anyone can email a PDF that carries a known supplier's ח.פ - classic invoice
+        # fraud. A known supplier writing from an address it never used is held back.
+        notes.append(f"שולח לא מוכר לספק הזה ({sender}): לוודא שהחשבונית אמיתית")
     key = f"{inv.supplier_id}:{inv.invoice_number}"
     if inv.invoice_number and key in entered:
         notes.append("כפילות: החשבונית הזו כבר נקלטה בעבר")
@@ -124,7 +128,7 @@ def fetch() -> Path | None:
             inv.warnings.append(f"תאריך החשבונית רחוק מהיום שבו הגיע המייל ({f.received:%d/%m/%Y}): לבדוק")
         sup = suppliers.get(inv.supplier_id)
         key = f"{inv.supplier_id}:{inv.invoice_number}"
-        notes = review_notes(inv, sup, seen_keys, batch_keys, cfg)
+        notes = review_notes(inv, sup, seen_keys, batch_keys, cfg, f.sender)
         batch_keys.add(key)
         rows.append({
             "approve": "" if notes else "כן",
@@ -141,6 +145,7 @@ def fetch() -> Path | None:
             "notes": " | ".join(notes),
             "file": str(f.pdf),
             "key": f.mail_id,
+            "sender": f.sender.lower(),
         })
 
     # Unfinished rows whose mail was not fetched this time (aged out, moved, deleted, or
@@ -203,9 +208,12 @@ def export(review_path: Path | None = None) -> Path | None:
         approved_keys.add(key)
         approved.append(r)
         if r["supplier_id"]:  # learn: next time this supplier is filled in automatically
+            known = suppliers.get(r["supplier_id"], {}).get("senders", [])
+            senders = sorted(set(known) | ({r["sender"]} if r.get("sender") else set()))
             suppliers[r["supplier_id"]] = {"name": r["supplier_name"],
                                            "supplier_account": r["supplier_account"],
-                                           "expense_account": r["expense_account"]}
+                                           "expense_account": r["expense_account"],
+                                           "senders": senders}
 
     held = ("\n\nהשורות האלה סומנו לאישור אבל לא נכנסו:\n• " + "\n• ".join(problems)) if problems else ""
     state["mail_ids"] = sorted(done_ids | {r["key"] for r in rejected})

@@ -31,6 +31,7 @@ REVIEW_COLS = [
     ("notes", "הערות"),
     ("file", "קובץ"),
     ("key", "מזהה"),
+    ("sender", "נשלח מ"),
 ]
 
 # Column titles in import.xlsx. They only have to be recognisable: the first import
@@ -42,6 +43,15 @@ IMPORT_COLS = ["אסמכתא", "אסמכתא2", "תאריך אסמכתא", "תא
 GREEN = PatternFill("solid", fgColor="E2F0D9")
 YELLOW = PatternFill("solid", fgColor="FFF2CC")
 HEAD = PatternFill("solid", fgColor="1F4E78")
+
+
+def _no_formulas(ws) -> None:
+    """Text read out of a PDF is data, never a formula. openpyxl stores any string that
+    starts with "=" as a live formula, so a crafted invoice could plant one in her sheet."""
+    for row in ws.iter_rows():
+        for cell in row:
+            if isinstance(cell.value, str) and cell.value.startswith("="):
+                cell.data_type = "s"
 
 
 def write_review(rows: list[dict], path: Path) -> None:
@@ -59,8 +69,8 @@ def write_review(rows: list[dict], path: Path) -> None:
         fill = YELLOW if r.get("notes") else GREEN
         for cell in ws[ws.max_row]:
             cell.fill = fill
-    widths = [12, 26, 13, 12, 12, 14, 12, 12, 10, 12, 14, 45, 30, 8]
-    for col, w in zip("ABCDEFGHIJKLMN", widths):
+    widths = [12, 26, 13, 12, 12, 14, 12, 12, 10, 12, 14, 45, 30, 8, 28]
+    for col, w in zip("ABCDEFGHIJKLMNO", widths):
         ws.column_dimensions[col].width = w
     for row in ws.iter_rows(min_row=2):
         row[6].number_format = "DD/MM/YYYY"
@@ -68,6 +78,7 @@ def write_review(rows: list[dict], path: Path) -> None:
             c.number_format = "#,##0.00"
     ws.column_dimensions["N"].hidden = True
     ws.freeze_panes = "B2"
+    _no_formulas(ws)
     wb.save(path)
 
 
@@ -80,7 +91,7 @@ def read_review(path: Path) -> list[dict]:
             continue
         row = dict(zip(keys, values))
         for k in ("supplier_id", "supplier_account", "expense_account", "invoice_number",
-                  "allocation_number", "supplier_name", "key"):
+                  "allocation_number", "supplier_name", "key", "sender"):
             v = row.get(k)
             # Excel turns typed account numbers into floats (40012 -> 40012.0)
             row[k] = "" if v is None else (str(int(v)) if isinstance(v, float) and v.is_integer() else str(v).strip())
@@ -130,6 +141,7 @@ def write_import(rows: list[dict], vat_account: str, path: Path) -> None:
             if row[idx].value is not None:
                 row[idx].value = str(row[idx].value)
         row[2].number_format = row[3].number_format = "DD/MM/YYYY"
+    _no_formulas(ws)
     ref = f"'{ws.title}'!$A$1:$M${last}"
     wb.defined_names["invoices"] = DefinedName("invoices", attr_text=ref)
     wb.save(path)

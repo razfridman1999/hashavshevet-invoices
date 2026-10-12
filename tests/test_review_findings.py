@@ -94,6 +94,23 @@ def test_two_candidate_supplier_ids_warns():
     assert has(inv, "שני מספרי")
 
 
+# --- security review: text from a PDF must never become an Excel formula ------------------
+def test_pdf_text_is_never_written_as_a_formula(tmp_path):
+    import openpyxl
+    from invoices.workbook import write_import, write_review
+    evil = '=HYPERLINK("http://evil.example","לחצי כאן")'
+    row = {"approve": "", "supplier_name": evil, "supplier_id": SUP, "supplier_account": "1",
+           "expense_account": "2", "invoice_number": "=1+1", "invoice_date": date(2026, 10, 5),
+           "net": 100.0, "vat": 18.0, "total": 118.0, "allocation_number": "", "notes": evil,
+           "file": "x.pdf", "key": "k"}
+    write_review([row], tmp_path / "r.xlsx")
+    write_import([row], "77100", tmp_path / "i.xlsx")
+    for name in ("r.xlsx", "i.xlsx"):
+        for r in openpyxl.load_workbook(tmp_path / name).active.iter_rows():
+            for c in r:
+                assert c.data_type != "f", f"{name}!{c.coordinate} is a formula: {c.value}"
+
+
 # --- finding 5: the invoice date, not another date ---------------------------------------
 def test_prefers_invoice_date_over_order_date():
     inv = read(f'ספק בע"מ\nח.פ {SUP}\nחשבונית מס 9\nתאריך הזמנה: 01/08/2026\nתאריך חשבונית: 05/10/2026\n'
