@@ -127,18 +127,24 @@ def test_pdf_text_cannot_plant_a_formula_in_the_log(home):
     assert cell.data_type == "s"
 
 
-def test_new_button_reaches_a_pc_whose_updater_did_not_know_it(tmp_path):
+@pytest.mark.parametrize("name", [main.JOURNAL_BAT, main.APP_BAT])
+def test_new_button_reaches_a_pc_whose_updater_did_not_know_it(tmp_path, name):
     app = tmp_path / "app"
     app.mkdir()
     (app / "run.py").write_text("", encoding="utf-8")
-    main.ensure_journal_button(app)
+    main.ensure_launchers(app)
     # identical to the button shipped in the repo, CRLF included (cmd reads it line by line)
-    assert (app / main.JOURNAL_BAT).read_bytes() == (ROOT / main.JOURNAL_BAT).read_bytes()
+    assert (app / name).read_bytes() == (ROOT / name).read_bytes()
 
 
 def test_button_is_only_made_inside_an_install(tmp_path):
-    main.ensure_journal_button(tmp_path)
-    assert not (tmp_path / main.JOURNAL_BAT).exists()
+    main.ensure_launchers(tmp_path)
+    assert not any(tmp_path.glob("*.bat"))
+
+
+def test_new_launchers_are_kept_by_later_updates():
+    import updater
+    assert set(main.LAUNCHERS) <= set(updater.MANAGED)
 
 
 def test_unreadable_scan_is_listed_by_its_file_name(home):

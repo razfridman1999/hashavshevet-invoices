@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>חשבוניות לחשבשבת</title>
+<style>
+  :root {
+    --navy: #1f4e78; --ink: #1d2733; --muted: #5b6673; --line: #d9dee4; --bg: #f4f6f9; --card: #fff;
+    --yellow: #fff2cc; --yellow-ink: #7a5b00; --green: #e2f0d9; --green-ink: #2e6b1f;
+    --blue: #ddebf7; --blue-ink: #1f4e78; --grey: #ededed; --red: #fbe3e3; --red-ink: #8a1c1c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--ink); font-size: 16px; }
+  header { background: var(--navy); color: #fff; padding: 18px 28px; display: flex; align-items: baseline; gap: 14px; }
+  header h1 { margin: 0; font-size: 24px; }
+  header .ver { opacity: .7; font-size: 13px; margin-inline-start: auto; }
+  main { max-width: 1080px; margin: 0 auto; padding: 22px 20px 40px; }
+  .banner { background: var(--red); color: var(--red-ink); border-radius: 10px; padding: 14px 18px; margin-bottom: 18px;
+            display: none; align-items: center; gap: 14px; font-weight: 600; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 22px; }
+  .card { border-radius: 12px; padding: 16px 18px; border: 1px solid var(--line); cursor: pointer; text-align: start;
+          font: inherit; color: inherit; }
+  .card .n { font-size: 38px; font-weight: 700; line-height: 1.1; }
+  .card .l { font-size: 15px; margin-top: 4px; }
+  .card.pending { background: var(--yellow); color: var(--yellow-ink); }
+  .card.ready { background: var(--green); color: var(--green-ink); }
+  .card.exported { background: var(--blue); color: var(--blue-ink); }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .step { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .step .num { width: 30px; height: 30px; border-radius: 50%; background: var(--navy); color: #fff; display: grid; place-items: center; font-weight: 700; }
+  .step h2 { margin: 0; font-size: 18px; }
+  .step p { margin: 0; color: var(--muted); font-size: 14px; flex: 1; }
+  button.main { background: var(--navy); color: #fff; border: 0; border-radius: 9px; padding: 13px 16px; font: inherit; font-weight: 700; cursor: pointer; }
+  button.main:hover { filter: brightness(1.15); }
+  button.link { background: none; border: 0; color: var(--navy); font: inherit; text-decoration: underline; cursor: pointer; padding: 0; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .result { display: none; margin: 18px 0 0; border-radius: 10px; padding: 14px 18px; white-space: pre-line; border: 1px solid var(--line); background: var(--card); }
+  .result.ok { border-color: #a9d18e; background: #f3faef; }
+  .result.err { border-color: #e6a1a1; background: var(--red); color: var(--red-ink); }
+  .busy { display: none; margin-top: 18px; color: var(--muted); }
+  .busy::before { content: ""; display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--navy);
+                  border-radius: 50%; animation: spin 0.8s linear infinite; margin-inline-end: 8px; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  section.list { margin-top: 28px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .tabs { display: flex; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
+  .tab { border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 6px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+  .tab[aria-pressed="true"] { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .tabs input { margin-inline-start: auto; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 14px; min-width: 200px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: start; background: #f7f8fa; color: var(--muted); font-weight: 600; padding: 9px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 9px 12px; border-bottom: 1px solid #eef0f3; vertical-align: top; }
+  td.num { direction: ltr; text-align: end; white-space: nowrap; }
+  td.todo { white-space: pre-line; }
+  .pill { display: inline-block; border-radius: 12px; padding: 2px 10px; font-size: 13px; white-space: nowrap; }
+  .pill.p { background: var(--yellow); color: var(--yellow-ink); } .pill.r { background: var(--green); color: var(--green-ink); }
+  .pill.e { background: var(--blue); color: var(--blue-ink); } .pill.x { background: var(--grey); color: #555; }
+  .empty { padding: 28px; text-align: center; color: var(--muted); }
+  footer { margin-top: 22px; display: flex; gap: 22px; flex-wrap: wrap; font-size: 14px; }
+  .gone { display: none; padding: 40px; text-align: center; font-size: 18px; }
+  @media (max-width: 760px) { .cards, .steps { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header><h1>חשבוניות לחשבשבת</h1><span class="ver" id="ver"></span></header>
+<main id="app">
+  <div class="banner" id="setup-banner">
+    <span>לפני הכל צריך למלא הגדרות (פעם אחת בלבד).</span>
+    <button class="main" data-run="setup">פתיחת ההגדרות</button>
+  </div>
+
+  <div class="cards">
+    <button class="card pending" data-filter="ממתינה לבדיקה"><div class="n" id="c-pending">0</div><div class="l">ממתינות לבדיקה</div></button>
+    <button class="card ready" data-filter="מוכנה לייצוא"><div class="n" id="c-ready">0</div><div class="l">מוכנות לקובץ קליטה</div></button>
+    <button class="card exported" data-filter="בקובץ קליטה"><div class="n" id="c-exported">0</div><div class="l">בקובץ קליטה החודש</div></button>
+  </div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="num">1</div><h2>משיכת חשבוניות</h2>
+      <p>קורא את החשבוניות החדשות מהמייל ופותח טבלת בדיקה באקסל. אאוטלוק צריך להיות פתוח.</p>
+      <button class="main" data-run="fetch">משיכת חשבוניות מהמייל</button>
+    </div>
+    <div class="step">
+      <div class="num">2</div><h2>בדיקה</h2>
+      <p>בשורות הצהובות כתוב מה לבדוק. ממלאים, כותבים "כן" או "לא", שומרים וסוגרים.</p>
+      <button class="main" data-run="review">פתיחת טבלת הבדיקה</button>
+    </div>
+    <div class="step">
+      <div class="num">3</div><h2>קובץ לחשבשבת</h2>
+      <p>יוצר קובץ קליטה מהשורות המאושרות. בחשבשבת: כללי &gt; ממשקים &gt; יבוא תנועות הנה"ח &gt; ODBC.</p>
+      <button class="main" data-run="export">יצירת קובץ לחשבשבת</button>
+    </div>
+  </div>
+
+  <div class="busy" id="busy">עובד על זה...</div>
+  <div class="result" id="result" role="status"></div>
+
+  <section class="list">
+    <div class="tabs" id="tabs">
+      <button class="tab" aria-pressed="false" data-filter="פתוחות">צריך טיפול</button>
+      <button class="tab" aria-pressed="false" data-filter="ממתינה לבדיקה">ממתינות</button>
+      <button class="tab" aria-pressed="false" data-filter="מוכנה לייצוא">מוכנות</button>
+      <button class="tab" aria-pressed="false" data-filter="בקובץ קליטה">בקובץ קליטה</button>
+      <button class="tab" aria-pressed="false" data-filter="הכל">הכל</button>
+      <input id="search" type="search" placeholder="חיפוש ספק או מספר חשבונית">
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>מצב</th><th>ספק</th><th>מספר חשבונית</th><th>תאריך</th><th>סה"כ</th><th>מה צריך / למה</th><th>עודכן</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="empty">אין כאן חשבוניות.</div>
+  </section>
+
+  <footer>
+    <button class="link" data-run="journal">היומן באקסל</button>
+    <button class="link" data-run="folder">פתיחת התיקייה</button>
+    <button class="link" data-run="setup">הגדרות</button>
+    <button class="link" data-run="guide">מדריך</button>
+  </footer>
+</main>
+<div class="gone" id="gone">המערכת נסגרה. כדי להמשיך, ללחוץ שוב על האייקון "חשבוניות לחשבשבת".</div>
+
+<script>
+"use strict";
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+const PILL = {"ממתינה לבדיקה": "p", "מוכנה לייצוא": "r", "בקובץ קליטה": "e", "לא תיקלט": "x"};
+let items = [], filter = "פתוחות", working = false;
+
+const $ = id => document.getElementById(id);
+
+async function api(path, method) {
+  const r = await fetch(path, {method: method || "GET", headers: {"X-Token": TOKEN}});
+  if (r.status === 403) throw new Error("forbidden");
+  return r.json();
+}
+
+function el(tag, text, cls) {
+  const e = document.createElement(tag);      // text only, never HTML: names come from PDFs
+  if (text !== undefined) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
+}
+
+function fmtDate(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v || "");
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : (v || "");
+}
+
+function fmtWhen(v) {
+  const m = /^\d{4}-(\d{2})-(\d{2}) (\d{2}:\d{2})/.exec(v || "");
+  return m ? `${m[2]}/${m[1]} ${m[3]}` : (v || "");
+}
+
+function fmtMoney(v) {
+  const n = Number(v);
+  return v === "" || isNaN(n) ? "" : n.toLocaleString("he-IL", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+function render() {
+  const q = $("search").value.trim();
+  const shown = items.filter(i =>
+    (filter === "הכל" || (filter === "פתוחות" ? (i.status === "ממתינה לבדיקה" || i.status === "מוכנה לייצוא") : i.status === filter))
+    && (!q || (i.supplier_name + " " + i.invoice_number).includes(q)));
+  const body = $("rows");
+  body.replaceChildren();
+  for (const i of shown) {
+    const tr = el("tr");
+    const st = el("td"); st.append(el("span", i.status, "pill " + (PILL[i.status] || "p")));
+    tr.append(st, el("td", i.supplier_name), el("td", i.invoice_number), el("td", fmtDate(i.invoice_date)),
+              el("td", fmtMoney(i.total), "num"),
+              el("td", (i.todo || (i.export_file ? "בקובץ: " + i.export_file : "")).split(" | ").join("\n"), "todo"),
+              el("td", fmtWhen(i.updated), "num"));
+    body.append(tr);
+  }
+  $("empty").style.display = shown.length ? "none" : "block";
+  $("empty").textContent = filter === "פתוחות" && !q ? "אין חשבוניות שמחכות לטיפול." : "אין כאן חשבוניות.";
+  for (const t of document.querySelectorAll(".tab")) t.setAttribute("aria-pressed", String(t.dataset.filter === filter));
+}
+
+async function refresh() {
+  try {
+    const s = await api("/api/status");
+    $("ver").textContent = s.version ? "גרסה " + s.version : "";
+    $("c-pending").textContent = s.counts.pending;
+    $("c-ready").textContent = s.counts.ready;
+    $("c-exported").textContent = s.counts.exported_month;
+    $("setup-banner").style.display = s.configured ? "none" : "flex";
+    items = s.items;
+    render();
+  } catch (e) {
+    $("app").style.display = "none";
+    $("gone").style.display = "block";
+  }
+}
+
+async function run(action) {
+  if (working) return;
+  working = true;
+  for (const b of document.querySelectorAll("button[data-run]")) b.disabled = true;
+  const res = $("result");
+  res.style.display = "none";
+  const quiet = ["review", "journal", "folder", "guide"].includes(action);
+  if (!quiet) $("busy").style.display = "block";
+  try {
+    const r = await api("/api/run/" + action, "POST");
+    if (r.text) {
+      res.textContent = r.text;
+      res.className = "result " + (r.ok ? "ok" : "err");
+      res.style.display = "block";
+    }
+  } catch (e) {
+    res.textContent = "אין חיבור למערכת. לסגור את הדף וללחוץ שוב על האייקון.";
+    res.className = "result err";
+    res.style.display = "block";
+  } finally {
+    $("busy").style.display = "none";
+    for (const b of document.querySelectorAll("button[data-run]")) b.disabled = false;
+    working = false;
+    refresh();
+  }
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.run) run(b.dataset.run);
+  else if (b.dataset.filter) { filter = b.dataset.filter; render(); }
+});
+$("search").addEventListener("input", render);
+refresh();
+setInterval(() => { if (!working) refresh(); }, 20000);   // also keeps the server alive while open
+</script>
+</body>
+</html>

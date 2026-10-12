@@ -13,9 +13,15 @@ MB_OK, MB_ICONERROR, MB_ICONINFO = 0x0, 0x10, 0x40
 MB_RIGHT, MB_RTLREADING, MB_TOPMOST = 0x80000, 0x100000, 0x40000
 TITLE = "חשבוניות לחשבשבת"
 
+# When the home page runs an action, its messages go back to the page instead of a box.
+captured: list[tuple[str, bool]] | None = None
+
 
 def message(text: str, error: bool = False) -> None:
     print(text)  # also kept for tests and for anyone running it from a terminal
+    if captured is not None:
+        captured.append((text, error))
+        return
     if os.environ.get("INVOICES_NO_OPEN") or sys.platform != "win32":
         return
     flags = MB_OK | MB_RIGHT | MB_RTLREADING | MB_TOPMOST | (MB_ICONERROR if error else MB_ICONINFO)

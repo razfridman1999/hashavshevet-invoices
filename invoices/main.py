@@ -304,23 +304,52 @@ def show_journal() -> None:
         os.startfile(view)
 
 
+APP_DIR = Path(__file__).resolve().parents[1]
 JOURNAL_BAT = "3 - יומן חשבוניות.bat"
-JOURNAL_BAT_TEXT = '@echo off\r\ncd /d "%~dp0"\r\nstart "" pythonw run.py journal\r\n'
+APP_BAT = "חשבוניות לחשבשבת.bat"
+LAUNCHERS = {name: f'@echo off\r\ncd /d "%~dp0"\r\nstart "" pythonw run.py {command}\r\n'
+             for name, command in ((JOURNAL_BAT, "journal"), (APP_BAT, "app"))}
 
 
-def ensure_journal_button(app: Path = Path(__file__).resolve().parents[1]) -> None:
+def ensure_launchers(app: Path = APP_DIR) -> None:
     """An updater only copies the files it knew about when it was installed, so a button
-    added later never arrives through it. The new code puts its own button in place."""
-    bat = app / JOURNAL_BAT
-    if not bat.exists() and (app / "run.py").exists():
-        try:
-            bat.write_bytes(JOURNAL_BAT_TEXT.encode("ascii"))
-        except OSError:
-            pass                 # a missing shortcut must not stop her real work
+    added later never arrives through it. The new code puts its own buttons in place."""
+    if not (app / "run.py").exists():
+        return
+    for name, text in LAUNCHERS.items():
+        if not (app / name).exists():
+            try:
+                (app / name).write_bytes(text.encode("ascii"))
+            except OSError:
+                pass             # a missing shortcut must not stop her real work
+
+
+def ensure_desktop_icon(cfg: dict) -> bool:
+    """Once: an icon on her desktop that opens the home page. Never again after that,
+    so an icon she chose to delete stays deleted. True when it was just made."""
+    if cfg.get("desktop_icon_done") or os.environ.get("INVOICES_NO_OPEN") or sys.platform != "win32":
+        return False
+    cfg["desktop_icon_done"] = True
+    save(CONFIG, cfg)
+    try:
+        import win32com.client
+        shell = win32com.client.Dispatch("WScript.Shell")
+        link = shell.CreateShortcut(str(Path(shell.SpecialFolders("Desktop")) / "חשבוניות לחשבשבת.lnk"))
+        exe = Path(sys.executable)
+        pythonw = exe.with_name("pythonw.exe")
+        link.TargetPath = str(pythonw if pythonw.exists() else exe)
+        link.Arguments = "run.py app"
+        link.WorkingDirectory = str(APP_DIR)
+        link.IconLocation = r"%SystemRoot%\System32\imageres.dll,112"
+        link.Description = "חשבוניות לחשבשבת"
+        link.Save()
+        return True
+    except Exception:
+        return False
 
 
 def run(command: str = "fetch") -> None:
-    ensure_journal_button()
+    ensure_launchers()
     HOME.mkdir(parents=True, exist_ok=True)
     if not CONFIG.exists():
         save(CONFIG, DEFAULT_CONFIG)
@@ -330,6 +359,13 @@ def run(command: str = "fetch") -> None:
         return
     if command == "journal":
         show_journal()
+        return
+    if ensure_desktop_icon({**DEFAULT_CONFIG, **load(CONFIG, {})}) and command != "app":
+        ui.message('חדש: על שולחן העבודה יש עכשיו אייקון "חשבוניות לחשבשבת". '
+                   "הוא פותח מסך אחד עם כל הכפתורים ועם המצב של כל החשבוניות.")
+    if command == "app":
+        from . import webapp
+        webapp.serve()
         return
     try:
         result = {"fetch": fetch, "export": export}[command]()
