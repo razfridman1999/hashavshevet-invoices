@@ -2,6 +2,7 @@
 
   fetch   pull new invoice PDFs from Outlook, read them, write review.xlsx
   export  read the approved review.xlsx, learn new suppliers, write import.xlsx
+  journal open the log of every invoice and its status
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from . import sources, supplier_index, ui
+from . import journal, sources, supplier_index, ui
 from .extract import Invoice, extract
 from .workbook import description_of, details_text, read_review, save_xls_copy, write_import, write_review
 
@@ -100,6 +101,15 @@ def _balance_problem(r: dict) -> str:
     except InvalidOperation:
         return "סכום לא תקין"
     return "" if net + vat == total else f'לפני מע"מ {net} + מע"מ {vat} לא שווה לסה"כ {total}'
+
+
+def _log(changes: list[tuple[dict, str, str]], export_file: str = "") -> str:
+    """Update the log of statuses. It only reports: a failure here must never undo or
+    block what was already done, so it turns into a line in her message instead."""
+    try:
+        return journal.record(HOME, changes, export_file)
+    except Exception as e:
+        return f"\n\nיומן החשבוניות לא התעדכן ({e}). החשבוניות עצמן טופלו כרגיל."
 
 
 def fetch() -> Path | None:
@@ -190,7 +200,9 @@ def fetch() -> Path | None:
     out = HOME / f"לבדיקה {datetime.now():%Y-%m-%d %H%M%S}.xlsx"
     write_review(rows, out)
     ready = sum(1 for r in rows if not r["notes"])
-    ui.message(f"נמצאו {len(rows)} חשבוניות: {ready} מוכנות, {len(rows) - ready} לבדיקה.\n\nהטבלה תיפתח עכשיו.")
+    logged = _log([(r, *journal.status_after_fetch(r)) for r in rows])
+    ui.message(f"נמצאו {len(rows)} חשבוניות: {ready} מוכנות, {len(rows) - ready} לבדיקה.\n\nהטבלה תיפתח עכשיו."
+               + logged)
     return out
 
 
@@ -212,7 +224,7 @@ def export(review_path: Path | None = None) -> Path | None:
     except PermissionError:
         ui.fail("הטבלה פתוחה באקסל. לשמור, לסגור אותה ולנסות שוב.")
 
-    approved, rejected, problems = [], [], []
+    approved, rejected, held_rows = [], [], []
     done_ids = set(state["mail_ids"])
     entered, approved_keys = set(state["invoice_keys"]), set()
     for r in review_rows:
@@ -229,14 +241,14 @@ def export(review_path: Path | None = None) -> Path | None:
                                           ("total", 'סה"כ')) if not r.get(k)]
         label = f'{r["supplier_name"]} {r["invoice_number"]}'
         if missing:
-            problems.append(f'{label}: חסר {", ".join(missing)}')
+            held_rows.append((r, f'{label}: חסר {", ".join(missing)}'))
             continue
         if bad := _balance_problem(r):
-            problems.append(f"{label}: {bad}")
+            held_rows.append((r, f"{label}: {bad}"))
             continue
         key = f'{r["supplier_id"]}:{r["invoice_number"]}'
         if r["invoice_number"] and (key in entered or key in approved_keys):
-            problems.append(f"{label}: כבר נקלטה או מופיעה פעמיים - לא נכנסה שוב")
+            held_rows.append((r, f"{label}: כבר נקלטה או מופיעה פעמיים - לא נכנסה שוב"))
             continue
         approved_keys.add(key)
         approved.append(r)
@@ -253,11 +265,14 @@ def export(review_path: Path | None = None) -> Path | None:
                                            "description": description,
                                            "senders": senders}
 
+    problems = [text for _, text in held_rows]
     held = ("\n\nהשורות האלה סומנו לאישור אבל לא נכנסו:\n• " + "\n• ".join(problems)) if problems else ""
     state["mail_ids"] = sorted(done_ids | {r["key"] for r in rejected})
+    not_exported = ([(r, journal.REJECTED, 'סומנה "לא"') for r in rejected]
+                    + [(r, journal.PENDING, text) for r, text in held_rows])
     if not approved:
         save(STATE, state)
-        ui.message("אין שורות מאושרות." + held)
+        ui.message("אין שורות מאושרות." + held + _log(not_exported))
         return None
 
     out = HOME / f"לקליטה בחשבשבת {datetime.now():%Y-%m-%d %H%M%S}.xlsx"
@@ -269,19 +284,52 @@ def export(review_path: Path | None = None) -> Path | None:
     state["invoice_keys"] = sorted(entered | approved_keys)
     save(STATE, state)
     save(SUPPLIERS, suppliers)
+    logged = _log([(r, journal.EXPORTED, "") for r in approved] + not_exported, out.name)
     ui.message(f"נוצר קובץ קליטה עם {len(approved)} חשבוניות.\n\n"
                f"בחשבשבת: כללי > ממשקים > יבוא תנועות הנה\"ח > ODBC, ולבחור את הקובץ:\n{out.name}"
-               + (f"\n\nאם חשבשבת לא רואה אותו, לבחור את:\n{xls.name}" if xls else "") + held)
+               + (f"\n\nאם חשבשבת לא רואה אותו, לבחור את:\n{xls.name}" if xls else "") + held + logged)
     return out
 
 
+def show_journal() -> None:
+    if not (HOME / journal.JSON_NAME).exists():
+        ui.message('היומן עוד ריק. הוא יתמלא אחרי "1 - משיכת חשבוניות".')
+        return
+    view = HOME / journal.XLSX_NAME
+    try:
+        journal.write_view(journal.load(HOME), view)
+    except PermissionError:
+        pass                     # already open in Excel: showing it is all she asked for
+    if not os.environ.get("INVOICES_NO_OPEN"):
+        os.startfile(view)
+
+
+JOURNAL_BAT = "3 - יומן חשבוניות.bat"
+JOURNAL_BAT_TEXT = '@echo off\r\ncd /d "%~dp0"\r\nstart "" pythonw run.py journal\r\n'
+
+
+def ensure_journal_button(app: Path = Path(__file__).resolve().parents[1]) -> None:
+    """An updater only copies the files it knew about when it was installed, so a button
+    added later never arrives through it. The new code puts its own button in place."""
+    bat = app / JOURNAL_BAT
+    if not bat.exists() and (app / "run.py").exists():
+        try:
+            bat.write_bytes(JOURNAL_BAT_TEXT.encode("ascii"))
+        except OSError:
+            pass                 # a missing shortcut must not stop her real work
+
+
 def run(command: str = "fetch") -> None:
+    ensure_journal_button()
     HOME.mkdir(parents=True, exist_ok=True)
     if not CONFIG.exists():
         save(CONFIG, DEFAULT_CONFIG)
     if command == "setup":
         from . import setup_check
         setup_check.run()
+        return
+    if command == "journal":
+        show_journal()
         return
     try:
         result = {"fetch": fetch, "export": export}[command]()

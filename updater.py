@@ -22,7 +22,8 @@ VERSION = ROOT / "VERSION"
 BACKUP = ROOT / ".backup"
 # what an update replaces; her data never lives here (it is in Documents)
 MANAGED = ["invoices", "run.py", "updater.py", "VERSION", "requirements.txt", "מדריך.html",
-           "0 - התקנה ראשונה.bat", "1 - משיכת חשבוניות.bat", "2 - יצירת קובץ לחשבשבת.bat"]
+           "0 - התקנה ראשונה.bat", "1 - משיכת חשבוניות.bat", "2 - יצירת קובץ לחשבשבת.bat",
+           "3 - יומן חשבוניות.bat"]
 
 
 def local_version() -> str:
