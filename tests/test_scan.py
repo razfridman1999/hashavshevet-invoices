@@ -119,3 +119,28 @@ def test_the_switch_takes_only_on_or_off(home):
     assert main.load(h / "config.json", {})["scan_reader"] == "claude"
     clients.save_settings(h, {"scan_reader": "everything"})
     assert main.load(h / "config.json", {})["scan_reader"] == ""
+
+
+def test_claude_runs_with_no_tools_and_the_images_inside_the_message(monkeypatch, tmp_path):
+    """A crafted scan can carry text like "read file X": with no tools it cannot open anything."""
+    seen = {}
+
+    def fake_run(cmd, input, cwd, **kw):
+        seen.update(cmd=cmd, input=input, cwd=cwd, files=list(Path(cwd).iterdir()))
+        out = '{"type":"result","is_error":false,"structured_output":{"supplier_id":"1"}}'
+        return type("R", (), {"returncode": 0, "stdout": out})()
+    monkeypatch.setattr(scan.subprocess, "run", fake_run)
+    assert scan.ask_claude([b"png-bytes"], "p", "claude.exe") == {"supplier_id": "1"}
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--tools") + 1] == "" and "--allowedTools" not in cmd and "Read" not in cmd
+    assert "--strict-mcp-config" in cmd and "--no-session-persistence" in cmd
+    assert seen["files"] == []                                  # an empty folder, nothing to find
+    msg = __import__("json").loads(seen["input"])
+    assert msg["message"]["content"][0]["type"] == "image"
+
+
+def test_a_failed_or_refused_answer_is_no_answer(monkeypatch):
+    def fake_run(cmd, input, cwd, **kw):
+        return type("R", (), {"returncode": 0, "stdout": '{"type":"result","is_error":true,"structured_output":{"a":1}}'})()
+    monkeypatch.setattr(scan.subprocess, "run", fake_run)
+    assert scan.ask_claude([b"x"], "p", "claude.exe") is None
